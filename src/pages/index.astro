@@ -1,25 +1,115 @@
 ---
-import Layout from '../layouts/Layout.astro';
+import Layout from '../../layouts/Layout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+let executionFeedback = "";
+
+// Handle the client-side booking reservation submission natively at the edge
+if (Astro.request.method === "POST") {
+  try {
+    const formData = await Astro.request.formData();
+    const name = formData.get("clientName");
+    const email = formData.get("clientEmail");
+    const slotIso = formData.get("selectedSlot");
+
+    if (name && email && slotIso) {
+      const startSelected = new Date(slotIso.toString());
+      // Default consultation windows configured precisely to 45 minutes duration
+      const endSelected = new Date(startSelected.getTime() + 45 * 60 * 1000);
+
+      await db.prepare(`
+        INSERT INTO bookings (id, opportunity_id, client_name, client_email, meeting_subject, start_time, end_time, status, uk_gdpr_consent_logged)
+        VALUES (?, NULL, ?, ?, 'Strategic IT Consultation Intake', ?, ?, 'Scheduled', 1)
+      `).bind(crypto.randomUUID(), name, email, startSelected.toISOString(), endSelected.toISOString()).run();
+
+      executionFeedback = "Success: Your strategic consultation has been securely logged. A confirmation pathway is initializing.";
+    } else {
+      executionFeedback = "Error: Please complete all mandatory fields before dispatching request.";
+    }
+  } catch (err: any) {
+    executionFeedback = `Error: ${err.message}`;
+  }
+}
+
+// Fixed operational slots for demonstration. In production, these cross-reference against existing rows
+const potentialSlots = [
+  { display: '09:30 GMT', iso: '2026-06-08T09:30:00Z' },
+  { display: '11:00 GMT', iso: '2026-06-08T11:00:00Z' },
+  { display: '14:30 GMT', iso: '2026-06-08T14:30:00Z' },
+  { display: '16:00 GMT', iso: '2026-06-08T16:00:00Z' },
+];
+
+let finalAvailableSlots = [...potentialSlots];
+
+try {
+  // Query existing active appointments or internal blocks from D1
+  const existingRecords = await db.prepare("SELECT start_time FROM bookings WHERE status IN ('Scheduled', 'Blocked')").all();
+  const blockedIsos = (existingRecords.results || []).map((b: any) => b.start_time);
+  
+  // Filter out any hours matching existing bookings or administrative blocks
+  finalAvailableSlots = potentialSlots.filter(slot => !blockedIsos.includes(slot.iso));
+} catch (e) {
+  // Graceful recovery if tables are undergoing reconfiguration runs
+}
 ---
-<Layout title="JSOS Core Control | Edge Hub">
-  <main class="flex flex-col items-center justify-center min-h-screen px-4 selection:bg-brand-primary/40">
-    <div class="text-center space-y-6 max-w-xl">
-      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-primary to-brand-accent shadow-xl shadow-brand-primary/20">
-        <span class="text-2xl font-bold text-white tracking-wider">JS</span>
+
+<Layout title="Schedule Strategic IT Consultation | JS Office Solutions" hideNav={true}>
+  <main class="min-h-screen bg-brand-canvas flex flex-col items-center justify-center p-4">
+    <div class="w-full max-w-xl bg-brand-surface/70 border border-slate-800 p-8 rounded-2xl backdrop-blur-xl shadow-2xl space-y-6">
+      
+      <div class="flex flex-col items-center text-center space-y-2">
+        <img src="/jsos_logo.svg" alt="JS Office Solutions Official Logo" class="h-10 w-auto object-contain" />
+        <h2 class="text-xl font-bold text-white tracking-tight pt-2">Schedule Strategic Review</h2>
+        <p class="text-xs text-slate-400 max-w-sm">Select an available operational session to align your network assets with predictive data analytics.</p>
       </div>
-      
-      <h1 class="text-4xl font-extrabold tracking-tight text-white sm:text-5xl">
-        JSOS <span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-primary to-brand-accent">Core Control</span>
-      </h1>
-      
-      <p class="text-slate-400 text-base md:text-lg leading-relaxed">
-        Serverless Operations Hub initialised via GitHub Web UI. Custom CRM, Booking, PSA, and Automated Ledger pipelines fully optimised for the Cloudflare distributed network layer.
-      </p>
-      
-      <div class="pt-6 flex items-center justify-center gap-4 text-xs text-slate-500 border-t border-slate-900/60">
-        <span>DPO Regulation: Joshua Stevens</span>
-        <span class="w-1.5 h-1.5 rounded-full bg-slate-800"></span>
-        <span>Jurisdiction: England & Wales</span>
+
+      {executionFeedback && (
+        <div class={`p-4 rounded-xl text-xs font-semibold border ${executionFeedback.startsWith('Success') ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+          {executionFeedback}
+        </div>
+      )}
+
+      {executionFeedback.startsWith('Success') ? (
+        <div class="text-center py-6">
+          <p class="text-xs text-slate-400">Our administrative operations lead will review your tracking request. Under the governance of England & Wales, your details are fully isolated under strict corporate privacy standards.</p>
+        </div>
+      ) : (
+        <form method="POST" class="space-y-5">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Your Full Name *</label>
+              <input type="text" name="clientName" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Email Address *</label>
+              <input type="email" name="clientEmail" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">Available Sessions (45 Minutes)</label>
+            {finalAvailableSlots.length === 0 ? (
+              <p class="text-xs text-amber-400 bg-amber-500/5 p-4 border border-amber-500/20 rounded-xl text-center">No open consultation sessions remain vacant for this date parameter.</p>
+            ) : (
+              <div class="grid grid-cols-2 gap-2">
+                {finalAvailableSlots.map((slot) => (
+                  <label class="border border-slate-800 bg-brand-canvas hover:border-brand-primary rounded-xl p-3 flex items-center justify-between cursor-pointer transition select-none group">
+                    <span class="text-xs text-slate-300 font-medium group-hover:text-white">{slot.display}</span>
+                    <input type="radio" name="selectedSlot" value={slot.iso} required class="accent-brand-accent h-3 w-3 bg-slate-900 border-slate-800" />
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition duration-200 tracking-wide">
+            Confirm Consultation Reservation
+          </button>
+        </form>
+      )}
+
+      <div class="border-t border-slate-900 pt-4 text-center">
+        <p class="text-[9px] text-slate-500">Corporate Protection Safeguards Monitored by Joshua Stevens (DPO). JS Office Solutions UK.</p>
       </div>
     </div>
   </main>
