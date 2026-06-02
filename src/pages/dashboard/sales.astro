@@ -1,0 +1,79 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import BookingGrid from '../../components/BookingGrid.astro';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Query real-time metrics aggregated directly inside the serverless edge loop
+let totalPipelineValue = 0;
+let opportunitiesCount = 0;
+let leadOpportunities: any[] = [];
+
+try {
+  const analyticsSummary = await db.prepare("SELECT SUM(gross_value) as total, COUNT(id) as count FROM opportunities").first();
+  totalPipelineValue = analyticsSummary?.total || 0;
+  opportunitiesCount = analyticsSummary?.count || 0;
+
+  const dataset = await db.prepare("SELECT * FROM opportunities ORDER BY gross_value DESC").all();
+  leadOpportunities = dataset.results || [];
+} catch (e) {
+  // Graceful fallback execution path if tables are unpopulated during staging tests
+  leadOpportunities = [];
+}
+---
+
+<Layout title="JSOS Core Control | Corporate Sales Pipeline">
+  <div class="min-h-screen p-6 md:p-12 max-w-7xl mx-auto space-y-10">
+    
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-800/80 pb-6 gap-4">
+      <div>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Internal Strategy Terminal</span>
+        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Sales & Pipeline Ledger</h1>
+      </div>
+      <div class="flex gap-4">
+        <div class="bg-brand-surface border border-slate-800 px-5 py-3 rounded-xl min-w-[140px]">
+          <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Gross Pipeline Value</p>
+          <p class="text-xl font-bold text-white mt-1">£{totalPipelineValue.toLocaleString('en-GB')}</p>
+        </div>
+        <div class="bg-brand-surface border border-slate-800 px-5 py-3 rounded-xl min-w-[100px]">
+          <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Deals</p>
+          <p class="text-xl font-bold text-brand-accent mt-1">{opportunitiesCount}</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      
+      <div class="lg:col-span-2 space-y-4">
+        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">High-Fidelity Prospect Profiles</h2>
+        
+        {leadOpportunities.length === 0 ? (
+          <div class="bg-brand-surface/40 border border-dashed border-slate-800 rounded-xl p-8 text-center text-slate-500 text-xs">
+            No tracked customer accounts compiled within the live ledger tables yet.
+          </div>
+        ) : (
+          <div class="space-y-2.5">
+            {leadOpportunities.map((opportunity: any) => (
+              <div class="bg-brand-surface/80 border border-slate-800/80 rounded-xl p-4 flex justify-between items-center transition-all duration-200 hover:border-violet-800/60">
+                <div>
+                  <h4 class="text-sm font-bold text-white">{opportunity.title}</h4>
+                  <p class="text-[11px] text-slate-400 mt-0.5">Pipeline State Alignment: <span class="text-brand-accent font-semibold">{opportunity.stage}</span></p>
+                </div>
+                <span class="text-sm font-mono font-bold text-white">
+                  £{opportunity.gross_value.toLocaleString('en-GB')}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div class="space-y-4">
+        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Native Scheduling Preview</h2>
+        <BookingGrid consultationType="Premium Managed IT Audit" allocatedMinutes={45} />
+      </div>
+
+    </div>
+
+  </div>
+</Layout>
