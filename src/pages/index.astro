@@ -1,25 +1,22 @@
 ---
 import Layout from '../layouts/Layout.astro';
 ---
-<Layout title="JSOS Core Control | Edge Hub">
-  <main class="flex flex-col items-center justify-center min-h-screen px-4 selection:bg-brand-primary/40">
+<Layout title="JSOS Core Control | Edge Hub" hideNav={true}>
+  <main class="flex flex-col items-center justify-center min-h-screen px-4">
     <div class="text-center space-y-6 max-w-xl">
-      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-primary to-brand-accent shadow-xl shadow-brand-primary/20">
-        <span class="text-2xl font-bold text-white tracking-wider">JS</span>
+      <div class="inline-flex items-center justify-center">
+        <img src="/jsos_logo.svg" alt="JS Office Solutions Logo" class="h-12 w-auto object-contain" />
       </div>
-      
       <h1 class="text-4xl font-extrabold tracking-tight text-white sm:text-5xl">
         JSOS <span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-primary to-brand-accent">Core Control</span>
       </h1>
-      
       <p class="text-slate-400 text-base md:text-lg leading-relaxed">
-        Serverless Operations Hub initialised via GitHub Web UI. Custom CRM, Booking, PSA, and Automated Ledger pipelines fully optimised for the Cloudflare distributed network layer.
+        Serverless Operations Hub running on the Cloudflare distributed edge network layer. Custom CRM, Booking matrix, Sales Tracker, and Automated Billing pipelines.
       </p>
-      
-      <div class="pt-6 flex items-center justify-center gap-4 text-xs text-slate-500 border-t border-slate-900/60">
-        <span>DPO Regulation: Joshua Stevens</span>
-        <span class="w-1.5 h-1.5 rounded-full bg-slate-800"></span>
+      <div class="pt-6 flex items-center justify-center gap-4 text-xs text-slate-600 border-t border-slate-900/60">
         <span>Jurisdiction: England & Wales</span>
+        <span class="w-1.5 h-1.5 rounded-full bg-slate-800"></span>
+        <span>Framework Integration: Astro v5 Production</span>
       </div>
     </div>
   </main>
