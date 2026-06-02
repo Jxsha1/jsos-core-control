@@ -4,8 +4,8 @@ const { pathname } = Astro.url;
 
 const navItems = [
   { href: '/dashboard/sales', label: 'Sales Tracker' },
-  { href: '/dashboard/clients', label: 'CRM & Onboarding' },
-  { href: '/dashboard/calendar', label: 'Calendar Control' }, // Linked directly to the booking manager
+  { href: '/dashboard/clients', label: 'CRM Directory' },
+  { href: '/dashboard/calendar', label: 'Calendar Control' },
   { href: '/dashboard/tickets', label: 'PSA Ticketing' },
   { href: '/dashboard/invoices', label: 'Invoice Generator' },
 ];
@@ -52,7 +52,7 @@ const isActive = (href: string) => pathname === href || pathname.startsWith(href
       <div class="flex items-center gap-2">
         <span class="inline-flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
         <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest hidden sm:inline">
-          DPO Secure: J. Stevens
+          Edge Node Active
         </span>
       </div>
 
