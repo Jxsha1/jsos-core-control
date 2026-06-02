@@ -2,8 +2,9 @@ import { defineConfig } from 'astro/config';
 import cloudflare from '@astrojs/cloudflare';
 import tailwind from '@astrojs/tailwind';
 
+// https://astro.build/config
 export default defineConfig({
-  // Enforces dynamic Edge Server-Side Rendering for real-time CRM and ledger operations
+  // Enforces complete Edge Server-Side Rendering for real-time data analysis
   output: 'server',
   
   adapter: cloudflare({
@@ -13,6 +14,6 @@ export default defineConfig({
     }
   }),
   
-  // Natively links the Tailwind compiling framework
+  // Natively integrates the Tailwind design utility compilation layers
   integrations: [tailwind()]
 });
