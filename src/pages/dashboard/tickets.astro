@@ -1,0 +1,139 @@
+---
+import Layout from '../../layouts/Layout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+let ticketsList: any[] = [];
+let clientsList: any[] = [];
+let executionFeedback = "";
+
+if (Astro.request.method === "POST") {
+  try {
+    const formData = await Astro.request.formData();
+    const clientId = formData.get("clientId");
+    const title = formData.get("title");
+    const description = formData.get("description");
+    const priority = formData.get("priority");
+
+    if (clientId && title && description && priority) {
+      const now = new Date();
+      let responseHours = 24;
+      let resolutionHours = 72;
+
+      if (priority === 'Critical') { responseHours = 2; resolutionHours = 8; }
+      else if (priority === 'High') { responseHours = 4; resolutionHours = 24; }
+      else if (priority === 'Medium') { responseHours = 8; resolutionHours = 48; }
+
+      const resDeadline = new Date(now.getTime() + responseHours * 60 * 60 * 1000).toISOString();
+      const resolveDeadline = new Date(now.getTime() + resolutionHours * 60 * 60 * 1000).toISOString();
+
+      await db.prepare(`
+        INSERT INTO tickets (id, client_id, asset_id, title, description, priority, status, sla_response_deadline, sla_resolution_deadline, created_at)
+        VALUES (?, ?, NULL, ?, ?, ?, 'Open', ?, ?, DATETIME('now'))
+      `).bind(crypto.randomUUID(), clientId, title, description, priority, resDeadline, resolveDeadline).run();
+
+      executionFeedback = "Success: SLA Ticket routed to dispatch queue.";
+    }
+  } catch (err: any) {
+    executionFeedback = `Error: ${err.message}`;
+  }
+}
+
+try {
+  const tDataset = await db.prepare(`
+    SELECT t.*, c.company_name 
+    FROM tickets t 
+    JOIN clients c ON t.client_id = c.id 
+    ORDER BY CASE t.priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END, t.created_at DESC
+  `).all();
+  ticketsList = tDataset.results || [];
+  
+  const cDataset = await db.prepare("SELECT id, company_name FROM clients").all();
+  clientsList = cDataset.results || [];
+} catch (e) {
+  ticketsList = [];
+}
+---
+
+<Layout title="JSOS Core Control | PSA Ticketing Systems">
+  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
+    
+    <div>
+      <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Contractual SLA Router</span>
+      <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Professional Services Automation</h1>
+    </div>
+
+    {executionFeedback && (
+      <div class="p-4 bg-brand-primary/10 border border-brand-primary/30 rounded-xl text-xs text-brand-accent font-semibold">
+        {executionFeedback}
+      </div>
+    )}
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      
+      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
+        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Log Engineering Ticket</h3>
+        <form method="POST" class="space-y-4">
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Account *</label>
+            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition">
+              <option value="">Select Affected Corporate Client</option>
+              {clientsList.map(c => <option value={c.id}>{c.company_name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Incident Summary Title *</label>
+            <input type="text" name="title" required placeholder="e.g. Core Network Link Failure" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Technical Fault Breakdown *</label>
+            <textarea name="description" required rows="4" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition resize-none"></textarea>
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Priority Classification Matrix *</label>
+            <select name="priority" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition">
+              <option value="Low">Low Priority (Routine Support)</option>
+              <option value="Medium" selected>Medium Priority (Standard Event)</option>
+              <option value="High">High Priority (Major Business Disruption)</option>
+              <option value="Critical">Critical Priority (Complete Outage / Breach)</option>
+            </select>
+          </div>
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition">
+            Dispatch Queue Incident
+          </button>
+        </form>
+      </div>
+
+      <div class="lg:col-span-2 space-y-4">
+        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Active Operations Queue</h3>
+        
+        {ticketsList.length === 0 ? (
+          <div class="bg-brand-surface/40 border border-dashed border-slate-800 rounded-xl p-8 text-center text-slate-500 text-xs">
+            No active operational technical incidents are currently pending attention.
+          </div>
+        ) : (
+          <div class="space-y-3">
+            {ticketsList.map((ticket) => (
+              <div class="bg-brand-surface/90 border border-slate-800 rounded-xl p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:border-brand-accent/40 transition">
+                <div class="space-y-1 max-w-xl">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class={`text-[9px] font-extrabold px-2 py-0.5 rounded uppercase ${ticket.priority === 'Critical' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : ticket.priority === 'High' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-800 text-slate-400'}`}>
+                      {ticket.priority}
+                    </span>
+                    <span class="text-xs font-bold text-white">{ticket.company_name}</span>
+                  </div>
+                  <h4 class="text-sm font-bold text-slate-200">{ticket.title}</h4>
+                  <p class="text-xs text-slate-400 leading-normal">{ticket.description}</p>
+                </div>
+                <div class="text-left md:text-right font-mono text-[10px] space-y-1 text-slate-400 border-t md:border-t-0 pt-2 md:pt-0 border-slate-800 w-full md:w-auto">
+                  <p><span class="text-slate-600">SLA Response:</span> <span class="text-brand-accent font-semibold">{new Date(ticket.sla_response_deadline).toLocaleTimeString('en-GB')}</span></p>
+                  <p><span class="text-slate-600">SLA Resolution:</span> <span class="text-slate-200 font-semibold">{new Date(ticket.sla_resolution_deadline).toLocaleTimeString('en-GB')}</span></p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+    </div>
+  </main>
+</Layout>
