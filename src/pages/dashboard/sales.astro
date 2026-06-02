@@ -1,79 +1,164 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import BookingGrid from '../../components/BookingGrid.astro';
 
 const db = Astro.locals.runtime.env.DB;
+const r2 = Astro.locals.runtime.env.INVOICE_VAULT;
 
-// Query real-time metrics aggregated directly inside the serverless edge loop
-let totalPipelineValue = 0;
-let opportunitiesCount = 0;
-let leadOpportunities: any[] = [];
+let opportunitiesList: any[] = [];
+let clientsList: any[] = [];
+let feedbackMessage = "";
+
+if (Astro.request.method === "POST") {
+  try {
+    const formData = await Astro.request.formData();
+    const actionType = formData.get("actionType");
+
+    if (actionType === "create_opportunity") {
+      const clientId = formData.get("clientId");
+      const title = formData.get("title");
+      const grossValue = formData.get("grossValue");
+      const stage = formData.get("stage");
+      const contractFile = formData.get("contractFile") as File;
+
+      if (clientId && title && grossValue && stage) {
+        let r2Key = null;
+        let filename = null;
+
+        // Process binary streaming asset capture if a corporate contract is attached
+        if (contractFile && contractFile.size > 0) {
+          filename = contractFile.name;
+          r2Key = `contracts/${crypto.randomUUID()}-${filename}`;
+          const fileBuffer = Buffer.from(await contractFile.arrayBuffer());
+          
+          await r2.put(r2Key, fileBuffer, {
+            contentType: contractFile.type,
+            customMetadata: { originalName: filename }
+          });
+        }
+
+        await db.prepare(`
+          INSERT INTO opportunities (id, client_id, title, gross_value, stage, contract_r2_key, contract_filename)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(crypto.randomUUID(), clientId, title, parseFloat(grossValue.toString()), stage, r2Key, filename).run();
+
+        feedbackMessage = "Success: Opportunity pipeline record logged and indexed successfully.";
+      }
+    }
+  } catch (err: any) {
+    feedbackMessage = `Operational Exception: ${err.message}`;
+  }
+}
 
 try {
-  const analyticsSummary = await db.prepare("SELECT SUM(gross_value) as total, COUNT(id) as count FROM opportunities").first();
-  totalPipelineValue = analyticsSummary?.total || 0;
-  opportunitiesCount = analyticsSummary?.count || 0;
-
-  const dataset = await db.prepare("SELECT * FROM opportunities ORDER BY gross_value DESC").all();
-  leadOpportunities = dataset.results || [];
+  opportunitiesList = (await db.prepare(`
+    SELECT o.*, c.company_name FROM opportunities o 
+    JOIN clients c ON o.client_id = c.id 
+    ORDER BY o.gross_value DESC
+  `).all()).results || [];
+  
+  clientsList = (await db.prepare("SELECT id, company_name FROM clients ORDER BY company_name ASC").all()).results || [];
 } catch (e) {
-  // Graceful fallback execution path if tables are unpopulated during staging tests
-  leadOpportunities = [];
+  opportunitiesList = [];
 }
 ---
 
-<Layout title="JSOS Core Control | Corporate Sales Pipeline">
-  <div class="min-h-screen p-6 md:p-12 max-w-7xl mx-auto space-y-10">
+<Layout title="Sales Ledger & Contract Matrix | JSOS Core Control">
+  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
     
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-800/80 pb-6 gap-4">
-      <div>
-        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Internal Strategy Terminal</span>
-        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Sales & Pipeline Ledger</h1>
-      </div>
-      <div class="flex gap-4">
-        <div class="bg-brand-surface border border-slate-800 px-5 py-3 rounded-xl min-w-[140px]">
-          <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Gross Pipeline Value</p>
-          <p class="text-xl font-bold text-white mt-1">£{totalPipelineValue.toLocaleString('en-GB')}</p>
-        </div>
-        <div class="bg-brand-surface border border-slate-800 px-5 py-3 rounded-xl min-w-[100px]">
-          <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Deals</p>
-          <p class="text-xl font-bold text-brand-accent mt-1">{opportunitiesCount}</p>
-        </div>
-      </div>
+    <div class="border-b border-slate-800 pb-6">
+      <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Pipeline Acquisition Terminal</span>
+      <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Sales Tracker & Contracts</h1>
     </div>
+
+    {feedbackMessage && (
+      <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">
+        {feedbackMessage}
+      </div>
+    )}
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
       
+      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
+        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Log Deal & Contract</h3>
+        <form method="POST" enctype="multipart/form-data" class="space-y-4">
+          <input type="hidden" name="actionType" value="create_opportunity" />
+          
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Client *</label>
+            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
+              <option value="">Select Target Account</option>
+              {clientsList.map(c => <option value={c.id}>{c.company_name}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Deal Title Reference *</label>
+            <input type="text" name="title" required placeholder="e.g. Managed Infrastructure Upgrade" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Gross Value (£) *</label>
+              <input type="number" name="grossValue" step="0.01" required placeholder="5000" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Pipeline Stage *</label>
+              <select name="stage" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
+                <option value="Discovery">Discovery</option>
+                <option value="Proposal Out">Proposal Out</option>
+                <option value="Contract Negotiation">Contract Negotiation</option>
+                <option value="Closed Won">Closed Won</option>
+                <option value="Closed Lost">Closed Lost</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Executed Corporate Contract (PDF / File)</label>
+            <input type="file" name="contractFile" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer" />
+          </div>
+
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition shadow-lg shadow-brand-primary/20">
+            Commit Pipeline Deal Record
+          </button>
+        </form>
+      </div>
+
       <div class="lg:col-span-2 space-y-4">
-        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">High-Fidelity Prospect Profiles</h2>
+        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Active Deal Ecosystem</h3>
         
-        {leadOpportunities.length === 0 ? (
+        {opportunitiesList.length === 0 ? (
           <div class="bg-brand-surface/40 border border-dashed border-slate-800 rounded-xl p-8 text-center text-slate-500 text-xs">
-            No tracked customer accounts compiled within the live ledger tables yet.
+            No pipeline records tracked within the edge ledger databases yet.
           </div>
         ) : (
-          <div class="space-y-2.5">
-            {leadOpportunities.map((opportunity: any) => (
-              <div class="bg-brand-surface/80 border border-slate-800/80 rounded-xl p-4 flex justify-between items-center transition-all duration-200 hover:border-violet-800/60">
-                <div>
-                  <h4 class="text-sm font-bold text-white">{opportunity.title}</h4>
-                  <p class="text-[11px] text-slate-400 mt-0.5">Pipeline State Alignment: <span class="text-brand-accent font-semibold">{opportunity.stage}</span></p>
+          <div class="space-y-3">
+            {opportunitiesList.map((deal) => (
+              <div class="bg-brand-surface/90 border border-slate-800 rounded-xl p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-brand-primary/40 transition">
+                <div class="space-y-1">
+                  <span class="text-[9px] font-mono font-bold text-brand-accent px-2 py-0.5 rounded bg-brand-canvas border border-slate-800 uppercase">
+                    {deal.stage}
+                  </span>
+                  <h4 class="text-sm font-bold text-white pt-1">{deal.title}</h4>
+                  <p class="text-xs text-slate-400">{deal.company_name}</p>
+                  
+                  {deal.contract_filename && (
+                    <div class="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium pt-1">
+                      <span class="text-xs">📎</span>
+                      <span class="underline cursor-pointer">{deal.contract_filename}</span>
+                    </div>
+                  )}
                 </div>
-                <span class="text-sm font-mono font-bold text-white">
-                  £{opportunity.gross_value.toLocaleString('en-GB')}
-                </span>
+                
+                <div class="text-right font-mono text-sm font-bold text-white w-full sm:w-auto border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-800">
+                  £{deal.gross_value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      <div class="space-y-4">
-        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Native Scheduling Preview</h2>
-        <BookingGrid consultationType="Premium Managed IT Audit" allocatedMinutes={45} />
-      </div>
-
     </div>
-
-  </div>
+  </main>
 </Layout>
