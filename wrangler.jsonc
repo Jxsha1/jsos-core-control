@@ -18,14 +18,14 @@
     {
       "binding": "DB", 
       "database_name": "jsos-core-db",
-      "database_id": "YOUR_ACTUAL_D1_DATABASE_ID_FROM_CLOUDFLARE" 
+      "database_id": "bb59e764-fe2e-44f5-887a-da823999fc13" 
     }
   ],
   // Micro-Caching Identity Layer Binding Map
   "kv_namespaces": [
     {
       "binding": "SESSION",
-      "id": "YOUR_ACTUAL_KV_NAMESPACE_ID_FROM_CLOUDFLARE"
+      "id": "bb7ca369f0064da880b8de155c0be4f5"
     }
   ],
   // Asset Storage Archive Binding Map
