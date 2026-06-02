@@ -1,0 +1,125 @@
+---
+import Layout from '../../layouts/Layout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+let clientsList: any[] = [];
+let executionFeedback = "";
+
+// Handle immediate server-side form submissions natively on the same page
+if (Astro.request.method === "POST") {
+  try {
+    const formData = await Astro.request.formData();
+    const companyName = formData.get("companyName");
+    const contactName = formData.get("contactName");
+    const email = formData.get("email");
+    const phone = formData.get("phone");
+    const infrastructureNotes = formData.get("infrastructureNotes");
+    const gdprStatus = formData.get("gdprStatus");
+
+    if (companyName && contactName && email) {
+      await db.prepare(`
+        INSERT INTO clients (id, company_name, contact_name, email, phone, infrastructure_notes, gdpr_status, dpo_sign_off_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      `).bind(crypto.randomUUID(), companyName, contactName, email, phone || null, infrastructureNotes || '', gdprStatus || 'Compliant').run();
+      
+      executionFeedback = "Success: Client profile securely registered to D1 Ledger.";
+    }
+  } catch (err: any) {
+    executionFeedback = `Error: ${err.message}`;
+  }
+}
+
+// Read the live records from the edge database table during server side rendering
+try {
+  const dataset = await db.prepare("SELECT * FROM clients ORDER BY created_at DESC").all();
+  clientsList = dataset.results || [];
+} catch (e) {
+  clientsList = [];
+}
+---
+
+<Layout title="JSOS Core Control | CRM Client Management">
+  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
+    
+    <div>
+      <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Bespoke Edge Infrastructure</span>
+      <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">CRM Client Directory</h1>
+    </div>
+
+    {executionFeedback && (
+      <div class={`p-4 rounded-xl text-xs font-semibold border ${executionFeedback.startsWith('Success') ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'}`}>
+        {executionFeedback}
+      </div>
+    )}
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      
+      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
+        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Onboard Corporate Client</h3>
+        <form method="POST" class="space-y-4">
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Company Name *</label>
+            <input type="text" name="companyName" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Contact Person Name *</label>
+            <input type="text" name="contactName" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Email Address *</label>
+            <input type="email" name="email" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Telephone Connection</label>
+            <input type="text" name="phone" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Infrastructure Gaps & Notes</label>
+            <textarea name="infrastructureNotes" rows="3" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition resize-none"></textarea>
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">UK GDPR Compliance Status</label>
+            <select name="gdprStatus" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition">
+              <option value="Compliant">Compliant</option>
+              <option value="Review_Required">Review Required</option>
+              <option value="Non_Compliant">Non Compliant</option>
+            </select>
+          </div>
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition shadow-lg shadow-brand-primary/20">
+            Execute Onboarding Operations
+          </button>
+        </form>
+      </div>
+
+      <div class="lg:col-span-2 space-y-4">
+        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Active Managed Directory</h3>
+        
+        {clientsList.length === 0 ? (
+          <div class="bg-brand-surface/40 border border-dashed border-slate-800 rounded-xl p-8 text-center text-slate-500 text-xs">
+            No tracked corporate clients compiled within the live edge tables yet. Use the ingestion form to initialize data.
+          </div>
+        ) : (
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {clientsList.map((client) => (
+              <div class="bg-brand-surface/80 border border-slate-800 rounded-xl p-5 space-y-3 relative overflow-hidden group hover:border-brand-primary/60 transition-all duration-300">
+                <div class="absolute top-0 right-0 h-1 w-24 bg-gradient-to-r from-brand-primary to-brand-accent"></div>
+                <div>
+                  <h4 class="text-base font-bold text-white">{client.company_name}</h4>
+                  <p class="text-xs text-slate-400 mt-0.5">Contact: {client.contact_name}</p>
+                </div>
+                <div class="text-xs space-y-1 text-slate-300 pt-2 border-t border-slate-900">
+                  <p><span class="text-slate-500">Email:</span> {client.email}</p>
+                  <p><span class="text-slate-500">GDPR Framework:</span> <span class={client.gdpr_status === 'Compliant' ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}>{client.gdpr_status}</span></p>
+                </div>
+                <div class="bg-brand-canvas/60 p-2.5 rounded-lg border border-slate-900 text-[11px] text-slate-400 font-mono line-clamp-2">
+                  {client.infrastructure_notes}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+    </div>
+  </main>
+</Layout>
