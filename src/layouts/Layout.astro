@@ -3,7 +3,7 @@ import Navigation from '../components/Navigation.astro';
 
 interface Props {
   title?: string;
-  hideNav?: boolean; // Allows bypassing navigation on public screens or root landings
+  hideNav?: boolean; // Controls navigation visibility for client-facing or public screens
 }
 const { title = "JSOS Core Control", hideNav = false } = Astro.props;
 ---
@@ -12,11 +12,12 @@ const { title = "JSOS Core Control", hideNav = false } = Astro.props;
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
+    <link rel="icon" type="image/svg+xml" href="/jsos_logo.svg" />
     <title>{title}</title>
   </head>
   <body class="min-h-screen font-sans flex flex-col">
     { !hideNav && <Navigation /> }
-    <div class="flex-1">
+    <div class="flex-1 w-full">
       <slot />
     </div>
   </body>
