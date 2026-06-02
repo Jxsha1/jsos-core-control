@@ -1,0 +1,186 @@
+---
+import Layout from '../../layouts/Layout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+const r2 = Astro.locals.runtime.env.INVOICE_VAULT;
+
+let invoicesList: any[] = [];
+let clientsList: any[] = [];
+let financialFeedback = "";
+
+// Handle native server-side invoice compilation on the same page loop
+if (Astro.request.method === "POST") {
+  try {
+    const formData = await Astro.request.formData();
+    const clientId = formData.get("clientId");
+    const invoiceNumber = formData.get("invoiceNumber");
+    const itemDescription = formData.get("itemDescription");
+    const itemCostRaw = formData.get("itemCost");
+
+    if (clientId && invoiceNumber && itemDescription && itemCostRaw) {
+      const itemCost = parseFloat(itemCostRaw.toString());
+      
+      // Enforce our strict 14-day corporate net-payment cycle parameters
+      const issuedDate = new Date();
+      const dueDate = new Date();
+      dueDate.setDate(issuedDate.getDate() + 14);
+
+      const issuedStr = issuedDate.toISOString().split('T')[0];
+      const dueStr = dueDate.toISOString().split('T')[0];
+      
+      const invoiceId = crypto.randomUUID();
+      const r2StorageKey = `archives/${invoiceId}.json`;
+
+      // 1. Compile structured data payload representing the invoice elements
+      const structuredInvoicePayload = {
+        id: invoiceId,
+        invoiceNumber: invoiceNumber.toString(),
+        clientId: clientId.toString(),
+        totalGrossAmount: itemCost,
+        currency: 'GBP',
+        issuedDate: issuedStr,
+        dueDate: dueStr,
+        lineItems: [
+          { description: itemDescription.toString(), cost: itemCost }
+        ],
+        legalNotice: 'Regulated under England & Wales Jurisdiction. Security Framework alignment: Cyber Essentials.'
+      };
+
+      // 2. Stream transaction payload directly to our Cloudflare R2 Vault
+      await r2.put(r2StorageKey, JSON.stringify(structuredInvoicePayload, null, 2), {
+        customMetadata: { invoiceNumber: invoiceNumber.toString(), clientId: clientId.toString() },
+        contentType: 'application/json'
+      });
+
+      const r2VirtualUrl = `/vault/access/invoices/${invoiceId}`;
+
+      // 3. Register index record into the live Cloudflare D1 SQL relational database
+      await db.prepare(`
+        INSERT INTO invoices (id, client_id, invoice_number, amount_due, currency, status, issued_date, due_date, r2_archive_url)
+        VALUES (?, ?, ?, ?, 'GBP', 'Sent', ?, ?, ?)
+      `).bind(invoiceId, clientId, invoiceNumber, itemCost, issuedStr, dueStr, r2VirtualUrl).run();
+
+      financialFeedback = `Success: Invoice ${invoiceNumber} compiled, written to R2 Vault, and registered to D1 Ledger.`;
+    }
+  } catch (err: any) {
+    financialFeedback = `Financial System Error: ${err.message}`;
+  }
+}
+
+// Fetch live database assets during edge runtime execution to render tables dynamically
+try {
+  const iDataset = await db.prepare(`
+    SELECT i.*, c.company_name 
+    FROM invoices i 
+    JOIN clients c ON i.client_id = c.id 
+    ORDER BY i.issued_date DESC, i.invoice_number DESC
+  `).all();
+  invoicesList = iDataset.results || [];
+
+  const cDataset = await db.prepare("SELECT id, company_name FROM clients ORDER BY company_name ASC").all();
+  clientsList = cDataset.results || [];
+} catch (e) {
+  invoicesList = [];
+}
+---
+
+<Layout title="JSOS Core Control | Automated Invoicing Hub">
+  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
+    
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-800 pb-6 gap-4">
+      <div>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Automated Ledger Vault</span>
+        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Invoice Generation Hub</h1>
+      </div>
+      <div class="bg-brand-surface border border-slate-800 rounded-xl px-5 py-2.5 text-xs text-slate-400 max-w-xs leading-relaxed">
+        Storage Layer: Secure zero-egress <span class="text-brand-accent font-mono">Cloudflare R2</span> container.
+      </div>
+    </div>
+
+    {financialFeedback && (
+      <div class={`p-4 rounded-xl text-xs font-mono font-bold border ${financialFeedback.startsWith('Success') ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'}`}>
+        {financialFeedback}
+      </div>
+    )}
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      
+      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
+        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Compile Financial Ledger</h3>
+        <form method="POST" class="space-y-4">
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Account Profile *</label>
+            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition">
+              <option value="">Select Debtor Client profile</option>
+              {clientsList.map(client => <option value={client.id}>{client.company_name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Invoice Reference Number *</label>
+            <input type="text" name="invoiceNumber" required placeholder="e.g. JSOS-2026-001" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Billable Item/Milestone Description *</label>
+            <input type="text" name="itemDescription" required placeholder="e.g. Fixed-Fee Out-of-Scope Infrastructure Migration" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Gross Net Capital Fee (£ GBP) *</label>
+            <input type="number" name="itemCost" step="0.01" required placeholder="0.00" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+          </div>
+          
+          <div class="bg-brand-canvas/50 p-3 rounded-xl border border-slate-900 text-[10px] text-slate-400 leading-normal">
+            Submission automatically enforces an immutable **14-Day payment cycle** parameter.
+          </div>
+
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition shadow-lg shadow-brand-primary/20">
+            Generate & Archive Invoice Payload
+          </button>
+        </form>
+      </div>
+
+      <div class="lg:col-span-2 space-y-4">
+        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Corporate Transaction Ledger</h3>
+        
+        {invoicesList.length === 0 ? (
+          <div class="bg-brand-surface/40 border border-dashed border-slate-800 rounded-xl p-8 text-center text-slate-500 text-xs">
+            No tracked invoicing files compiled within the live edge transaction databases yet.
+          </div>
+        ) : (
+          <div class="space-y-3">
+            {invoicesList.map((invoice) => (
+              <div class="bg-brand-surface/90 border border-slate-800 rounded-xl p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-brand-primary/40 transition-all duration-300">
+                <div class="space-y-1">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-mono font-bold text-brand-accent px-2 py-0.5 rounded bg-brand-canvas border border-slate-800">
+                      {invoice.invoice_number}
+                    </span>
+                    <span class="text-xs font-bold text-white">{invoice.company_name}</span>
+                  </div>
+                  <p class="text-[11px] text-slate-400">
+                    Issued: {new Date(invoice.issued_date).toLocaleDateString('en-GB')} 
+                    <span class="text-slate-600 mx-1.5">|</span> 
+                    Due: <span class="text-slate-200 font-medium">{new Date(invoice.due_date).toLocaleDateString('en-GB')}</span>
+                  </p>
+                </div>
+                
+                <div class="flex items-center gap-4 justify-between sm:justify-end w-full sm:w-auto border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-800">
+                  <span class="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    {invoice.status}
+                  </span>
+                  <div class="text-right font-mono text-sm font-bold text-white">
+                    £{invoice.amount_due.toLocaleString('en-GB', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+    </div>
+    
+    <footer class="text-[10px] text-slate-500 text-center pt-10 border-t border-slate-900">
+      All accounting ledgers subject to strict UK GDPR audit review protocols governed under the laws of England & Wales. Data Protection Officer: Joshua Stevens.
+    </footer>
+  </main>
+</Layout>
