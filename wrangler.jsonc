@@ -12,5 +12,27 @@
   },
   "observability": {
     "enabled": true
-  }
+  },
+  // Relational SQL Configuration Binding Map
+  "d1_databases": [
+    {
+      "binding": "DB", 
+      "database_name": "jsos-core-db",
+      "database_id": "YOUR_ACTUAL_D1_DATABASE_ID_FROM_CLOUDFLARE" 
+    }
+  ],
+  // Micro-Caching Identity Layer Binding Map
+  "kv_namespaces": [
+    {
+      "binding": "SESSION",
+      "id": "YOUR_ACTUAL_KV_NAMESPACE_ID_FROM_CLOUDFLARE"
+    }
+  ],
+  // Asset Storage Archive Binding Map
+  "r2_buckets": [
+    {
+      "binding": "INVOICE_VAULT",
+      "bucket_name": "jsos-invoice-vault"
+    }
+  ]
 }
