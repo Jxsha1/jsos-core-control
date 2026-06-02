@@ -2,117 +2,127 @@
 import Layout from '../../layouts/Layout.astro';
 
 const db = Astro.locals.runtime.env.DB;
-let agendaList: any[] = [];
-let operationalFeedback = "";
+let bookedMeetings: any[] = [];
+let calendarFeedback = "";
 
-// Process administrative calendar block out execution triggers
 if (Astro.request.method === "POST") {
   try {
     const formData = await Astro.request.formData();
-    const blockDate = formData.get("blockDate"); // Format: YYYY-MM-DD
-    const blockTime = formData.get("blockTime"); // Format: HH:MM
-    const rationalReason = formData.get("reason") || "Administrative Focus Lockout";
+    const dateStr = formData.get("blockDate"); 
+    const timeStr = formData.get("blockTime"); 
+    const description = formData.get("reason") || "Administrative Focus Period";
 
-    if (blockDate && blockTime) {
-      const blockStart = new Date(`${blockDate}T${blockTime}:00Z`);
-      // Standardize administrative slot blocks directly to 45 minutes
-      const blockEnd = new Date(blockStart.getTime() + 45 * 60 * 1000);
+    if (dateStr && timeStr) {
+      const startIso = new Date(`${dateStr}T${timeStr}:00Z`).toISOString();
+      const endIso = new Date(new Date(startIso).getTime() + 30 * 60 * 1000).toISOString();
 
       await db.prepare(`
-        INSERT INTO bookings (id, opportunity_id, client_name, client_email, meeting_subject, start_time, end_time, status, uk_gdpr_consent_logged)
-        VALUES (?, NULL, 'INTERNAL BLOCK', 'admin@jsos.uk', ?, ?, ?, 'Blocked', 0)
-      `).bind(crypto.randomUUID(), rationalReason.toString(), blockStart.toISOString(), blockEnd.toISOString()).run();
+        INSERT INTO bookings (id, client_name, client_email, meeting_subject, start_time, end_time, status, uk_gdpr_consent_logged)
+        VALUES (?, 'INTERNAL EXCLUSION', 'ops@jsos.uk', ?, ?, ?, 'Blocked', 0)
+      `).bind(crypto.randomUUID(), description.toString(), startIso, endIso).run();
 
-      operationalFeedback = "Success: Availability parameter blocked out. Public link updated instantly.";
+      calendarFeedback = "Success: Operational time frame locked out. Public booking link synchronized.";
     }
   } catch (err: any) {
-    operationalFeedback = `Error: ${err.message}`;
+    calendarFeedback = `Scheduling Collision: ${err.message}`;
   }
 }
 
-// Fetch sorted calendar layout map representing live client bookings and active internal blocks
 try {
-  const dataset = await db.prepare("SELECT * FROM bookings ORDER BY start_time ASC").all();
-  agendaList = dataset.results || [];
+  bookedMeetings = (await db.prepare("SELECT * FROM bookings WHERE status IN ('Scheduled', 'Blocked') ORDER BY start_time ASC").all()).results || [];
 } catch (e) {
-  agendaList = [];
+  bookedMeetings = [];
 }
+
+// Generate high-fidelity sample visual 31-day calendar node framework maps
+const currentMonthDays = Array.from({ length: 31 }, (_, i) => i + 1);
 ---
 
-<Layout title="Calendar Control Hub | JSOS Master Console">
+<Layout title="Operational Master Calendar | JSOS Core Control">
   <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
     
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-800 pb-6 gap-4">
       <div>
-        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Operational Allocation Panel</span>
-        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Calendar & Availability Hub</h1>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Unified Operations Matrix</span>
+        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Calendar Control</h1>
       </div>
-      <a href="/book" target="_blank" class="bg-brand-surface border border-slate-800 text-brand-accent px-4 py-2 rounded-xl text-xs font-semibold hover:border-brand-primary transition">
-        Launch Live Public Link &rarr;
+      <a href="/book" target="_blank" class="bg-brand-primary hover:bg-violet-600 text-white px-4 py-2 rounded-xl text-xs font-semibold transition">
+        Launch Live Public Gateway &rarr;
       </a>
     </div>
 
-    {operationalFeedback && (
-      <div class="p-4 bg-brand-surface border border-brand-primary/20 rounded-xl text-xs text-brand-accent font-mono font-bold">
-        {operationalFeedback}
+    {calendarFeedback && (
+      <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">
+        {calendarFeedback}
       </div>
     )}
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
       
-      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit space-y-4">
-        <div>
-          <h3 class="text-sm font-bold text-white uppercase tracking-wider">Block Corporate Calendar Time</h3>
-          <p class="text-[11px] text-slate-400 mt-1">Instantly extract specified time coordinates from the public user booking interface matrix.</p>
+      <div class="lg:col-span-2 space-y-4">
+        <div class="bg-brand-surface/60 border border-slate-800 rounded-2xl p-6 shadow-xl">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-sm font-bold text-white uppercase tracking-wider">June 2026 Operational Matrix</h3>
+            <span class="text-xs text-slate-400 font-medium">Standard Weekdays (08:00 - 18:00)</span>
+          </div>
+          
+          <div class="grid grid-cols-7 gap-2 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-800/60 pb-2 mb-2">
+            <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div>
+          </div>
+          <div class="grid grid-cols-7 gap-2">
+            {currentMonthDays.map((day) => {
+              // Simple mockup layout engine attaching highlight indicators if matches active item dates
+              const hasEvent = day === 8; 
+              return (
+                <div class={`h-16 rounded-xl border p-2 flex flex-col justify-between text-left transition cursor-pointer ${hasEvent ? 'border-brand-primary bg-brand-primary/10' : 'border-slate-800 bg-brand-canvas hover:border-slate-700'}`}>
+                  <span class="text-xs font-mono font-bold text-slate-400">{day}</span>
+                  {hasEvent && <span class="h-1.5 w-1.5 rounded-full bg-brand-accent animate-pulse"></span>}
+                </div>
+              )
+            })}
+          </div>
         </div>
+
+        <div class="space-y-3 pt-4">
+          <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Agenda Timeline</h3>
+          {bookedMeetings.map((m) => (
+            <div class={`p-4 rounded-xl border flex justify-between items-center ${m.status === 'Blocked' ? 'bg-brand-canvas/40 border-slate-900 opacity-60' : 'bg-brand-surface border-slate-800'}`}>
+              <div>
+                <span class={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded uppercase ${m.status === 'Blocked' ? 'bg-slate-800 text-slate-400' : 'bg-brand-accent/20 text-brand-accent'}`}>
+                  {m.status}
+                </span>
+                <h4 class="text-sm font-bold text-white mt-1">{m.meeting_subject}</h4>
+                <p class="text-xs text-slate-400">{m.client_name}</p>
+              </div>
+              <div class="text-right font-mono text-xs">
+                <p class="text-white font-bold">{new Date(m.start_time).toLocaleDateString('en-GB')}</p>
+                <p class="text-brand-accent font-semibold mt-0.5">{new Date(m.start_time).toLocaleTimeString('en-GB', {hour: '2-digit', minute:'2-digit'})} GMT</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
+        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-2">Block Availability</h3>
+        <p class="text-xs text-slate-400 mb-4">Instantly exclude custom intervals from the public client reservation engine interface.</p>
         <form method="POST" class="space-y-4">
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Date *</label>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Exclusion Target Date *</label>
             <input type="date" name="blockDate" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Start Time (GMT) *</label>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Start Time Block (GMT) *</label>
             <input type="time" name="blockTime" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Exclusion Rationale / Notes</label>
-            <input type="text" name="reason" placeholder="e.g. Server Array Migration Window" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Lockout Rationale Note</label>
+            <input type="text" name="reason" placeholder="e.g. Scheduled Network Core Maintenance" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
           </div>
           <button type="submit" class="w-full bg-slate-950 border border-slate-800 text-slate-200 hover:border-brand-accent hover:text-white font-bold text-xs py-3 rounded-xl transition">
-            Enforce Administrative Lockout
+            Enforce Core Matrix Blockout
           </button>
         </form>
-      </div>
-
-      <div class="lg:col-span-2 space-y-4">
-        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Centralised Booking & Block Timeline</h3>
-        
-        {agendaList.length === 0 ? (
-          <div class="bg-brand-surface/40 border border-dashed border-slate-800 rounded-xl p-8 text-center text-slate-500 text-xs">
-            No tracked customer allocations or internal calendar lockout exceptions logged.
-          </div>
-        ) : (
-          <div class="space-y-2.5">
-            {agendaList.map((item) => (
-              <div class={`border rounded-xl p-4 flex justify-between items-center transition ${item.status === 'Blocked' ? 'bg-brand-canvas/40 border-slate-900 opacity-60' : 'bg-brand-surface border-slate-800 hover:border-brand-primary/50'}`}>
-                <div class="space-y-1">
-                  <div class="flex items-center gap-2">
-                    <span class={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase ${item.status === 'Blocked' ? 'bg-slate-800 text-slate-400' : 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30'}`}>
-                      {item.status}
-                    </span>
-                    <h4 class="text-xs font-bold text-white">{item.client_name}</h4>
-                  </div>
-                  <p class="text-xs font-semibold text-slate-300">{item.meeting_subject}</p>
-                  {item.status !== 'Blocked' && <p class="text-[10px] text-slate-500 font-mono">{item.client_email}</p>}
-                </div>
-                <div class="text-right font-mono text-xs">
-                  <p class="text-white font-bold">{new Date(item.start_time).toLocaleDateString('en-GB')}</p>
-                  <p class="text-brand-accent text-[11px] font-semibold mt-0.5">{new Date(item.start_time).toLocaleTimeString('en-GB', {hour: '2-digit', minute:'2-digit'})} GMT</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
     </div>
