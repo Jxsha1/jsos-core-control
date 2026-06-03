@@ -15,30 +15,26 @@ if (Astro.request.method === "POST") {
 
     if (action === "create") {
       const clientId = formData.get("clientId");
-      const opportunityId = formData.get("opportunityId");
+      const opportunityId = formData.get("opportunityId"); // Maps choice directly from internal project matrix
       const prefix = formData.get("prefix"); 
       const description = formData.get("itemDescription");
-      
-      const isFlatFee = formData.get("isFlatFee") === "1" ? 1 : 0;
-      const flatFeeAmount = isFlatFee ? parseFloat(formData.get("flatFeeAmount")?.toString() || "0") : 0;
-      
-      const isRecurring = formData.get("isRecurring") === "1" ? 1 : 0;
-      const recurringInterval = isRecurring ? formData.get("recurringInterval")?.toString() : null;
-      const recurringAmount = isRecurring ? parseFloat(formData.get("recurringAmount")?.toString() || "0") : 0;
+      const costRaw = formData.get("itemCost");
 
-      // Automatically compute overall contract total value parameters combined
-      const totalCombinedCost = flatFeeAmount + recurringAmount;
-
-      if (clientId && prefix && description && totalCombinedCost > 0) {
+      if (clientId && prefix && description && costRaw) {
+        const cost = parseFloat(costRaw.toString());
+        
+        // 1. Calculate Target Abbreviation Map Rules (4 chars if single word, initials if multi word)
         const client = await db.prepare("SELECT company_name FROM clients WHERE id = ?").bind(clientId).first();
-        if (!client) throw new Error("Target corporate account link mismatch.");
+        if (!client) throw new Error("Target client profile mismatch.");
         
         const name = client.company_name.trim();
         const words = name.split(/\s+/);
         let abbreviation = (words.length === 1) ? name.substring(0, 4).toUpperCase() : words.map((w: string) => w[0]).join("").toUpperCase();
 
+        // 2. Scan Sequential Matrix Row Total Counts to Determine Next Incremental Identification ID Number
         const counterScan = await db.prepare("SELECT COUNT(*) as count FROM invoices").first();
         const nextSequenceId = (counterScan?.count || 0) + 1;
+
         const generatedInvoiceNumber = `${prefix}-${abbreviation}-${nextSequenceId}`;
 
         const issuedStr = new Date().toISOString().split('T')[0];
@@ -46,54 +42,61 @@ if (Astro.request.method === "POST") {
         const dueStr = due.toISOString().split('T')[0];
         
         const invoiceId = crypto.randomUUID();
+        const r2Key = `archives/${invoiceId}.json`;
 
+        const payload = { id: invoiceId, invoiceNumber: generatedInvoiceNumber, total: cost, breakdown: description };
+        await r2.put(r2Key, JSON.stringify(payload, null, 2), { contentType: 'application/json' });
+
+        // 3. TRANSACTION COUPLING STEP: Log Invoice and instantly shift parent Opportunity to Contract Won status stage parameters
         await db.prepare(`
-          INSERT INTO invoices (id, client_id, opportunity_id, invoice_number, item_description, is_flat_fee, flat_fee_amount, is_recurring, recurring_interval, recurring_amount, amount_due, status, issued_date, due_date, is_archived)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Generated', ?, ?, 0)
-        `).bind(invoiceId, clientId, opportunityId || null, generatedInvoiceNumber, description, isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, totalCombinedCost, issuedStr, dueStr).run();
+          INSERT INTO invoices (id, client_id, opportunity_id, invoice_number, amount_due, currency, status, issued_date, due_date, r2_archive_url, is_archived)
+          VALUES (?, ?, ?, ?, ?, 'Sent', ?, ?, ?, 0)
+        `).bind(invoiceId, clientId, opportunityId || null, generatedInvoiceNumber, cost, issuedStr, dueStr, `/vault/${invoiceId}`).run();
 
+        // Automated Link execution routine: If tied to a specific project tracker, update its database stage immediately
         if (opportunityId) {
           await db.prepare("UPDATE opportunities SET stage = 'Contract Won' WHERE id = ?").bind(opportunityId).run();
+          feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled. Connected sales project automatically advanced to Contract Won!`;
+        } else {
+          feedbackMessage = `Success: Independent invoice compiled reference name: ${generatedInvoiceNumber}`;
         }
-        feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled safely as Generated.`;
       }
     }
 
     if (action === "update") {
       const id = formData.get("itemId");
+      const costRaw = formData.get("itemCost");
       const status = formData.get("status");
-      const cost = parseFloat(formData.get("amountDue")?.toString() || "0");
-      const sentDate = formData.get("sentDate") || null;
-      const paidDate = formData.get("paidDate") || null;
 
       await db.prepare(`
-        UPDATE invoices SET status = ?, amount_due = ?, sent_date = ?, paid_date = ? WHERE id = ?
-      `).bind(status, cost, sentDate, paidDate, id).run();
-      feedbackMessage = "Success: Dynamic row updates and lifecycle event timestamps saved successfully.";
+        UPDATE invoices SET amount_due = ?, status = ? WHERE id = ?
+      `).bind(parseFloat(costRaw.toString()), status, id).run();
+      feedbackMessage = "Success: Invoice row adjustments committed inline.";
     }
 
     if (action === "archive") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE invoices SET is_archived = 1 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Invoice archived.";
+      feedbackMessage = "Success: Transaction relocated to archives.";
     }
 
     if (action === "restore") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE invoices SET is_archived = 0 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Invoice returned to active scopes.";
+      feedbackMessage = "Success: Transaction restored to ledger dashboards.";
     }
 
     if (action === "purge") {
       const id = formData.get("itemId");
       await db.prepare("DELETE FROM invoices WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Financial node permanently purged from hardware devices.";
+      feedbackMessage = "Success: Row purged securely from distributed arrays.";
     }
   } catch (err: any) {
-    feedbackMessage = `Ledger Exception Boundary Event: ${err.message}`;
+    feedbackMessage = `Ledger Processing Fault: ${err.message}`;
   }
 }
 
+// Read current active data variables mapping directly from edge instances
 const invoicesList = (await db.prepare(`
   SELECT i.*, c.company_name, o.title as project_title FROM invoices i 
   JOIN clients c ON i.client_id = c.id 
@@ -102,31 +105,15 @@ const invoicesList = (await db.prepare(`
 `).bind(viewMode === 'archived' ? 1 : 0).all()).results || [];
 
 const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHERE is_archived = 0 ORDER BY company_name ASC").all()).results || [];
-const activeOpportunitiesList = (await db.prepare("SELECT id, title FROM opportunities WHERE is_archived = 0 AND stage != 'Contract Won'").all()).results || [];
-
-const visualProgressionSteps = [
-  { key: 'Generated', label: 'Generated' },
-  { key: 'Sent', label: 'Dispatched / Sent' },
-  { key: 'Paid', label: 'Paid / Settled' }
-];
+const activeOpportunitiesList = (await db.prepare("SELECT id, title, client_id FROM opportunities WHERE is_archived = 0 AND stage != 'Contract Won'").all()).results || [];
 ---
 
-<Layout title="Invoice Generator & Lifecycle Vault | JSOS Core Control">
-  <style type="text/css">
-    @media print {
-      body * { visibility: hidden; background: #ffffff !important; color: #000000 !important; }
-      nav, footer, form, button, .no-print, th:last-child, td:last-child { display: none !important; }
-      .print-invoice-card { visibility: visible; position: absolute; left: 0; top: 0; width: 100%; border: none !important; padding: 20px !important; background: white !important; color: black !important; }
-      .print-invoice-header { border-b: 2px solid #000000 !important; padding-bottom: 15px !important; margin-bottom: 25px !important; }
-      .print-title { font-size: 28px !important; font-weight: 800 !important; color: #000000 !important; text-transform: uppercase !important; }
-    }
-  </style>
-
-  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10 no-print">
+<Layout title="Invoice Generator & Vault Ledger | JSOS Core Control">
+  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
     
     <div class="flex justify-between items-end border-b border-slate-800 pb-6">
       <div>
-        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Bespoke Financial Ledger</span>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Automated Ledger Interconnect</span>
         <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Invoice Generation Hub</h1>
       </div>
       <div class="flex gap-2 font-mono text-xs">
@@ -147,21 +134,21 @@ const visualProgressionSteps = [
           <div>
             <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Client Debtor *</label>
             <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white">
-              <option value="">Select Target Account</option>
+              <option value="">Select Company Account</option>
               {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
             </select>
           </div>
 
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Link to Sales Project</label>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Link to Sales Tracker Project (Triggers "Contract Won")</label>
             <select name="opportunityId" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-brand-accent font-mono">
-              <option value="">Independent / Out-of-Scope Milestone</option>
-              {activeOpportunitiesList.map((o: any) => <option value={o.id}>{o.title}</option>)}
+              <option value="">Independent / Standalone Billable Item</option>
+              {activeOpportunitiesList.map((o: any) => <option value={o.id}>[{o.title}]</option>)}
             </select>
           </div>
 
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Prefix Code *</label>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Alphanumeric Code Prefix *</label>
             <div class="grid grid-cols-2 gap-2">
               <label class="border border-slate-800 bg-brand-canvas p-2 rounded-xl flex items-center justify-between text-xs cursor-pointer">
                 <span>JLDS</span> <input type="radio" name="prefix" value="JLDS" checked required class="accent-brand-accent" />
@@ -173,43 +160,17 @@ const visualProgressionSteps = [
           </div>
 
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Work Item Description Summary *</label>
-            <input type="text" name="itemDescription" required placeholder="Managed Platform Engineering" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white" />
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Billable Milestone Work Summary *</label>
+            <input type="text" name="itemDescription" required placeholder="e.g. Infrastructure Deployment" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white" />
           </div>
 
-          <div class="border border-slate-800 p-3 rounded-xl bg-brand-canvas/40 space-y-2">
-            <div class="flex justify-between items-center">
-              <span class="text-[10px] font-bold text-slate-300 uppercase">Include Flat Fee?</span>
-              <div class="flex gap-3 text-xs">
-                <label class="flex items-center gap-1"><input type="radio" name="isFlatFee" value="1" checked onchange="document.getElementById('flatFeeWrapper').style.display='block'" /> Yes</label>
-                <label class="flex items-center gap-1"><input type="radio" name="isFlatFee" value="0" onchange="document.getElementById('flatFeeWrapper').style.display='none'; document.getElementById('flatFeeInput').value='0'" /> No</label>
-              </div>
-            </div>
-            <div id="flatFeeWrapper" class="pt-1">
-              <input type="number" id="flatFeeInput" name="flatFeeAmount" step="0.01" placeholder="Flat Fee Capital Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
-            </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Gross Net Cost Capital (£) *</label>
+            <input type="number" name="itemCost" step="0.01" required placeholder="0.00" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white" />
           </div>
 
-          <div class="border border-slate-800 p-3 rounded-xl bg-brand-canvas/40 space-y-3">
-            <div class="flex justify-between items-center">
-              <span class="text-[10px] font-bold text-slate-300 uppercase">Include Recurring Fee?</span>
-              <div class="flex gap-3 text-xs">
-                <label class="flex items-center gap-1"><input type="radio" name="isRecurring" value="1" onchange="document.getElementById('recurringWrapper').style.display='block'" /> Yes</label>
-                <label class="flex items-center gap-1"><input type="radio" name="isRecurring" value="0" checked onchange="document.getElementById('recurringWrapper').style.display='none'; document.getElementById('recAmountInput').value='0'" /> No</label>
-              </div>
-            </div>
-            <div id="recurringWrapper" class="space-y-2 pt-1 hidden">
-              <div class="grid grid-cols-3 gap-1.5 text-[10px] font-mono">
-                <label class="border border-slate-800 p-1.5 rounded bg-brand-canvas flex items-center justify-between"><input type="radio" name="recurringInterval" value="Weekly" checked /> Wkly</label>
-                <label class="border border-slate-800 p-1.5 rounded bg-brand-canvas flex items-center justify-between"><input type="radio" name="recurringInterval" value="Monthly" /> Mthly</label>
-                <label class="border border-slate-800 p-1.5 rounded bg-brand-canvas flex items-center justify-between"><input type="radio" name="recurringInterval" value="Yearly" /> Yrly</label>
-              </div>
-              <input type="number" id="recAmountInput" name="recurringAmount" step="0.01" placeholder="Recurring Balance Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
-            </div>
-          </div>
-
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono uppercase tracking-wider">
-            Execute Statement Log
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono tracking-wide">
+            Generate & Archive Invoice
           </button>
         </form>
       </div>
@@ -219,17 +180,19 @@ const visualProgressionSteps = [
           <table class="min-w-full divide-y divide-slate-800 text-left">
             <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
               <tr>
-                <th class="px-6 py-4">Statement Reference ID</th>
-                <th class="px-6 py-4">Corporate Debtor Profile</th>
-                <th class="px-6 py-4">Fee Configuration Matrix</th>
-                <th class="px-6 py-4">Lifecycle Audit Pipeline (Dynamic Dates Mapped)</th>
+                <th class="px-6 py-4">Invoice Reference Name</th>
+                <th class="px-6 py-4">Linked Project Context</th>
+                <th class="px-6 py-4">Corporate Debtor Entity</th>
+                <th class="px-6 py-4">Lifecycle Timelines</th>
+                <th class="px-6 py-4">Status</th>
+                <th class="px-6 py-4">Net Capital Amount</th>
                 <th class="px-6 py-4 text-right">Console Controls</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
               {invoicesList.map((invoice: any) => {
                 const isEditing = editTargetId === invoice.id;
-                const formId = `form-invoice-row-${invoice.id}`;
+                const formId = `form-invoice-${invoice.id}`;
 
                 return (
                   <tr class="hover:bg-slate-900/40 transition-colors duration-150">
@@ -240,74 +203,39 @@ const visualProgressionSteps = [
                       </form>
                     )}
 
-                    <td class="px-6 py-4">
-                      <div class="font-mono font-bold text-brand-accent tracking-wide">{invoice.invoice_number}</div>
-                      {invoice.project_title && <div class="text-[10px] text-slate-500 font-mono mt-0.5">Project: {invoice.project_title}</div>}
+                    <td class="px-6 py-4 font-mono font-bold text-brand-accent tracking-wide">{invoice.invoice_number}</td>
+                    
+                    <td class="px-6 py-4 font-mono text-xs text-slate-400">
+                      {invoice.project_title ? `💼 ${invoice.project_title}` : <span class="text-slate-600">Standalone Item</span>}
+                    </td>
+
+                    <td class="px-6 py-4 font-bold text-white">{invoice.company_name}</td>
+
+                    <td class="px-6 py-4 font-mono text-[11px] text-slate-500">
+                      <div>Issued: {new Date(invoice.issued_date).toLocaleDateString('en-GB')}</div>
+                      <div class="text-brand-accent font-semibold mt-0.5">Due: {new Date(invoice.due_date).toLocaleDateString('en-GB')}</div>
                     </td>
 
                     <td class="px-6 py-4">
-                      <div class="font-bold text-white">{invoice.company_name}</div>
-                      <div class="text-[11px] text-slate-400 max-w-xs truncate mt-0.5">{invoice.item_description}</div>
-                    </td>
-
-                    <td class="px-6 py-4 font-mono text-[11px] text-slate-300">
                       {isEditing ? (
-                        <div class="space-y-1">
-                          <label class="block text-[9px] text-slate-500 uppercase">Gross Total (£)</label>
-                          <input type="number" name="amountDue" step="0.01" value={invoice.amount_due} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-24 focus:outline-none" />
-                        </div>
+                        <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1 py-0.5 text-xs text-white">
+                          <option value="Draft" selected={invoice.status === 'Draft'}>Draft</option>
+                          <option value="Sent" selected={invoice.status === 'Sent'}>Sent</option>
+                          <option value="Paid" selected={invoice.status === 'Paid'}>Paid</option>
+                          <option value="Overdue" selected={invoice.status === 'Overdue'}>Overdue</option>
+                        </select>
                       ) : (
-                        <div class="space-y-0.5">
-                          <div>Combined Net: <span class="text-white font-bold">£{invoice.amount_due.toLocaleString('en-GB', {minimumFractionDigits:2})}</span></div>
-                          <div class="text-[10px] text-slate-500">
-                            {invoice.is_flat_fee === 1 && `Flat: £${invoice.flat_fee_amount} `}
-                            {invoice.is_recurring === 1 && `Rec: £${invoice.recurring_amount}/${invoice.recurring_interval.substring(0,2)}`}
-                          </div>
-                        </div>
+                        <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border ${invoice.status === 'Paid' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
+                          {invoice.status}
+                        </span>
                       )}
                     </td>
 
-                    <td class="px-6 py-4 whitespace-nowrap">
+                    <td class="px-6 py-4 font-mono font-bold text-white">
                       {isEditing ? (
-                        <div class="space-y-2 p-1 border border-slate-800 rounded bg-brand-canvas/80 max-w-xs">
-                          <div>
-                            <label class="block text-[9px] text-slate-500 uppercase">Status Flag</label>
-                            <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white">
-                              <option value="Generated" selected={invoice.status === 'Generated'}>Generated</option>
-                              <option value="Sent" selected={invoice.status === 'Sent'}>Sent</option>
-                              <option value="Paid" selected={invoice.status === 'Paid'}>Paid</option>
-                            </select>
-                          </div>
-                          <div class="grid grid-cols-2 gap-1 text-[10px]">
-                            <div>
-                              <label class="text-slate-500 text-[8px] block">Date Sent</label>
-                              <input type="date" name="sentDate" value={invoice.sent_date || ""} form={formId} class="bg-slate-900 text-white p-0.5 rounded w-full" />
-                            </div>
-                            <div>
-                              <label class="text-slate-500 text-[8px] block">Date Paid</label>
-                              <input type="date" name="paidDate" value={invoice.paid_date || ""} form={formId} class="bg-slate-900 text-white p-0.5 rounded w-full" />
-                            </div>
-                          </div>
-                        </div>
+                        <input type="number" name="itemCost" step="0.01" value={invoice.amount_due} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-20" />
                       ) : (
-                        <div class="space-y-2">
-                          <div class="flex items-center gap-1 font-mono text-[9px] font-bold">
-                            {visualProgressionSteps.map((step, idx) => {
-                              const isCurrent = invoice.status === step.key;
-                              const isPast = visualProgressionSteps.findIndex(s => s.key === invoice.status) >= idx;
-                              return (
-                                <>
-                                  <span class={`px-1.5 py-0.5 rounded border ${isCurrent ? 'bg-brand-primary text-white border-brand-primary' : isPast ? 'bg-brand-primary/10 text-brand-accent border-brand-primary/20' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>{step.label}</span>
-                                  {idx < 2 && <span class="text-slate-800">&rarr;</span>}
-                                </>
-                              );
-                            })}
-                          </div>
-                          <div class="text-[10px] font-mono text-slate-500 space-y-0.5 leading-none">
-                            {invoice.sent_date && <div>• Dispatched: <span class="text-slate-400">{invoice.sent_date}</span></div>}
-                            {invoice.paid_date && <div>• Settled: <span class="text-emerald-400 font-bold">{invoice.paid_date}</span></div>}
-                          </div>
-                        </div>
+                        <span>£{invoice.amount_due.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</span>
                       )}
                     </td>
 
@@ -320,8 +248,6 @@ const visualProgressionSteps = [
                         </>
                       ) : viewMode === 'active' ? (
                         <>
-                          <button onclick={`window.print_target_statement('${invoice.invoice_number}', '${invoice.company_name}', '${invoice.item_description}', '${invoice.amount_due}')`} class="text-emerald-400 hover:underline font-bold">Export Quote</button>
-                          <span class="text-slate-800">|</span>
                           <a href={`?editId=${invoice.id}`} class="text-brand-accent hover:underline">Edit</a>
                           <span class="text-slate-800">|</span>
                           <form method="POST" class="inline">
@@ -338,7 +264,7 @@ const visualProgressionSteps = [
                             <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
                           </form>
                           <span class="text-slate-800">|</span>
-                          <form method="POST" class="inline" onsubmit="return confirm('PERMANENT AUDIT WIPEOUT CONTEXT RUN: Destroy financial node row permanently?');">
+                          <form method="POST" class="inline" onsubmit="return confirm('PERMANENT LEDGER WIPEOUT AUDIT: Destroy financial node record?');">
                             <input type="hidden" name="actionType" value="purge" />
                             <input type="hidden" name="itemId" value={invoice.id} />
                             <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
@@ -356,34 +282,4 @@ const visualProgressionSteps = [
 
     </div>
   </main>
-
-  <div class="hidden print-invoice-card font-sans bg-white text-black p-12">
-    <div class="print-invoice-header flex justify-between items-start border-b-2 border-black pb-6">
-      <div>
-        <div class="print-title text-3xl font-extrabold tracking-tight">JS Office Solutions Statement</div>
-        <div class="text-sm font-mono mt-1" id="printNodeNum">REFERENCE: </div>
-      </div>
-      <div class="text-right text-xs">
-        <div>Upminster, United Kingdom</div>
-        <div>Ops Framework: Serverless Edge Engine</div>
-      </div>
-    </div>
-    <div class="my-8 space-y-2 text-sm">
-      <div><strong class="font-bold">Target Customer Profile:</strong> <span id="printNodeCompany"></span></div>
-      <div><strong class="font-bold">Line Summary Breakdown:</strong> <span id="printNodeDesc"></span></div>
-    </div>
-    <div class="border-t border-black pt-4 text-right">
-      <div class="text-xl font-mono font-bold">Total Net Capital Owed: £<span id="printNodeCost"></span></div>
-    </div>
-  </div>
-
-  <script is:inline>
-    window.print_target_statement = function(num, company, desc, cost) {
-      document.getElementById('printNodeNum').innerText = "STATEMENT PATH REFERENCE: " + num;
-      document.getElementById('printNodeCompany').innerText = company;
-      document.getElementById('printNodeDesc').innerText = desc;
-      document.getElementById('printNodeCost').innerText = parseFloat(cost).toLocaleString('en-GB', {minimumFractionDigits:2});
-      window.print();
-    }
-  </script>
 </Layout>
