@@ -26,10 +26,18 @@ if (Astro.request.method === "POST") {
       
       const calculatedGross = flatFeeAmount + recurringAmount;
 
+      // Computes target execution timestamp using proper UK date layouts
+      const date = new Date();
+      const dd = String(date.getDate()).padStart(2, '0');
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const yy = String(date.getFullYear()).slice(-2);
+      const dateStr = `${dd}/${mm}/${yy}`;
+      const initialLog = `${stage} - £${calculatedGross.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
+
       await db.prepare(`
         INSERT INTO opportunities (id, client_id, title, is_flat_fee, flat_fee_amount, is_recurring, recurring_interval, recurring_amount, gross_value, stage, price_history, is_archived)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0)
-      `).bind(crypto.randomUUID(), clientId, title, isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, calculatedGross, stage).run();
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `).bind(crypto.randomUUID(), clientId, title, isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, calculatedGross, stage, initialLog).run();
     }
 
     if (action === "update") {
@@ -45,13 +53,17 @@ if (Astro.request.method === "POST") {
       
       const calculatedGross = flatFeeAmount + recurringAmount;
 
-      const current = await db.prepare("SELECT gross_value, price_history FROM opportunities WHERE id = ?").bind(id).first();
+      const current = await db.prepare("SELECT gross_value, price_history, stage FROM opportunities WHERE id = ?").bind(id).first();
       let updatedHistory = current?.price_history || "";
       
-      if (current && current.gross_value !== calculatedGross) {
-        const timestamp = new Date().toISOString().split('T')[0];
-        const logEntry = `${timestamp}: Changed from £${current.gross_value.toLocaleString('en-GB', {minimumFractionDigits:2})} to £${calculatedGross.toLocaleString('en-GB', {minimumFractionDigits:2})}`;
-        updatedHistory += (updatedHistory ? "||" : "") + logEntry;
+      if (current && (current.gross_value !== calculatedGross || current.stage !== stage)) {
+        const date = new Date();
+        const dd = String(date.getDate()).padStart(2, '0');
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const yy = String(date.getFullYear()).slice(-2);
+        const dateStr = `${dd}/${mm}/${yy}`;
+        const logEntry = `${stage} - £${calculatedGross.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
+        updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
       }
 
       await db.prepare(`
@@ -247,9 +259,9 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                             })}
                           </div>
                           {deal.price_history && (
-                            <div class="text-[9px] font-mono text-slate-500 leading-none space-y-0.5 max-w-xs truncate">
+                            <div class="text-[9px] font-mono text-slate-500 leading-none space-y-0.5 max-w-xs">
                               {deal.price_history.split('||').map((log: string) => (
-                                <div class="truncate text-amber-400/90">• {log}</div>
+                                <div>• {log}</div>
                               ))}
                             </div>
                           )}
