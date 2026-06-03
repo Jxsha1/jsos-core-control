@@ -100,3 +100,164 @@ const clientsList = (await db.prepare(baseQuery).bind(...queryParams).all()).res
         <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Onboard Corporate Profile</h3>
         <form method="POST" class="space-y-3">
           <input type="hidden" name="actionType" value="create" />
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Company Name *</label>
+            <input type="text" name="companyName" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Contact Person *</label>
+            <input type="text" name="contactName" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Business Email *</label>
+            <input type="email" name="email" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Phone Link</label>
+            <input type="text" name="phone" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Classification *</label>
+            <select name="status" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-primary">
+              <option value="New Prospect">New Prospect</option>
+              <option value="Strategic Negotiation">Strategic Negotiation</option>
+              <option value="Active Managed Client">Active Managed Client</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Technical Notes</label>
+            <textarea name="notes" rows="3" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-primary resize-none"></textarea>
+          </div>
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-2 rounded-lg transition font-mono tracking-wide">
+            Onboard Account
+          </button>
+        </form>
+      </div>
+
+      <div class="xl:col-span-3 space-y-4 w-full overflow-hidden">
+        <div class="flex items-center justify-between bg-brand-surface/40 border border-slate-800 px-4 py-2.5 rounded-xl">
+          <form method="GET" class="flex items-center gap-3">
+            <input type="hidden" name="view" value={viewMode} />
+            <label class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">Categorisation Filter:</label>
+            <select name="statusFilter" onchange="this.form.submit()" class="bg-brand-canvas border border-slate-800 rounded-lg text-xs text-slate-300 px-2 py-1 focus:outline-none">
+              <option value="All" selected={activeFilter === 'All'}>All</option>
+              <option value="New Prospect" selected={activeFilter === 'New Prospect'}>New Prospect</option>
+              <option value="Strategic Negotiation" selected={activeFilter === 'Strategic Negotiation'}>Strategic Negotiation</option>
+              <option value="Active Managed Client" selected={activeFilter === 'Active Managed Client'}>Active Managed Client</option>
+            </select>
+          </form>
+        </div>
+
+        <div class="border border-slate-800 rounded-xl bg-brand-surface/30 shadow-2xl w-full overflow-hidden">
+          <table class="w-full min-w-full divide-y divide-slate-800 text-left table-fixed border-collapse">
+            <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+              <tr>
+                <th class="px-4 py-3 w-1/4">Company Entity</th>
+                <th class="px-4 py-3 w-1/6">Primary Contact</th>
+                <th class="px-4 py-3 w-1/5">Status</th>
+                <th class="px-4 py-3 w-1/4">Communication Links</th>
+                <th class="px-4 py-3 text-right w-1/6">Controls</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
+              {clientsList.map((client: any) => {
+                const isEditing = editTargetId === client.id;
+                const formId = `form-client-${client.id}`;
+
+                return (
+                  <tr class="hover:bg-slate-900/30 transition">
+                    {isEditing && (
+                      <form method="POST" id={formId}>
+                        <input type="hidden" name="actionType" value="update" />
+                        <input type="hidden" name="itemId" value={client.id} />
+                      </form>
+                    )}
+
+                    <td class="px-4 py-3 whitespace-normal break-words">
+                      {isEditing ? (
+                        <div class="space-y-1">
+                          <input type="text" name="companyName" value={client.company_name} form={formId} required class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
+                          <input type="text" name="notes" value={client.infrastructure_notes} form={formId} class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-400" />
+                        </div>
+                      ) : (
+                        <div>
+                          <div class="font-bold text-white break-words">{client.company_name}</div>
+                          <div class="text-[10px] text-slate-500 font-mono truncate mt-0.5 break-words">{client.infrastructure_notes || "No historical logs appended."}</div>
+                        </div>
+                      )}
+                    </td>
+
+                    <td class="px-4 py-3 whitespace-normal break-words">
+                      {isEditing ? (
+                        <input type="text" name="contactName" value={client.contact_name} form={formId} required class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
+                      ) : (
+                        <span class="font-medium break-words">{client.contact_name}</span>
+                      )}
+                    </td>
+
+                    <td class="px-4 py-3 whitespace-normal break-words">
+                      {isEditing ? (
+                        <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-full">
+                          <option value="New Prospect" selected={client.status === "New Prospect"}>New Prospect</option>
+                          <option value="Strategic Negotiation" selected={client.status === "Strategic Negotiation"}>Strategic Negotiation</option>
+                          <option value="Active Managed Client" selected={client.status === "Active Managed Client"}>Active Managed Client</option>
+                        </select>
+                      ) : (
+                        <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border inline-block break-words ${client.status === 'Active Managed Client' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
+                          {client.status}
+                        </span>
+                      )}
+                    </td>
+
+                    <td class="px-4 py-3 font-mono text-[11px] whitespace-normal break-all">
+                      {isEditing ? (
+                        <div class="space-y-1">
+                          <input type="email" name="email" value={client.email} form={formId} required class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-white" />
+                          <input type="text" name="phone" value={client.phone || ""} form={formId} class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-white" />
+                        </div>
+                      ) : (
+                        <div class="break-all">
+                          <div class="text-slate-300 break-all">{client.email}</div>
+                          <div class="text-slate-500 mt-0.5 break-all">{client.phone || "No Link Line"}</div>
+                        </div>
+                      )}
+                    </td>
+
+                    <td class="px-4 py-3 text-right font-mono text-[11px] whitespace-normal break-words">
+                      {isEditing ? (
+                        <div class="flex flex-col items-end gap-1">
+                          <button type="submit" form={formId} class="text-emerald-400 font-bold hover:underline">Save</button>
+                          <a href={`?statusFilter=${activeFilter}&view=${viewMode}`} class="text-slate-500 hover:underline">Cancel</a>
+                        </div>
+                      ) : viewMode === 'active' ? (
+                        <div class="flex flex-col items-end gap-1">
+                          <a href={`?editId=${client.id}&statusFilter=${activeFilter}&view=${viewMode}`} class="text-brand-accent hover:underline">Edit</a>
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={client.id} />
+                            <button type="submit" class="text-amber-500 hover:underline">Archive</button>
+                          </form>
+                        </div>
+                      ) : (
+                        <div class="flex flex-col items-end gap-1">
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="restore" /><input type="hidden" name="itemId" value={client.id} />
+                            <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
+                          </form>
+                          <form method="POST" class="inline" onsubmit="return confirm('Purge row?');">
+                            <input type="hidden" name="actionType" value="purge" /><input type="hidden" name="itemId" value={client.id} />
+                            <button type="submit" class="text-rose-500 hover:underline font-bold">Purge</button>
+                          </form>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</Layout>
