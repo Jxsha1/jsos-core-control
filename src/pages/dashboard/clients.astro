@@ -41,6 +41,7 @@ if (Astro.request.method === "POST") {
         UPDATE clients SET company_name = ?, contact_name = ?, email = ?, phone = ?, infrastructure_notes = ?, status = ? WHERE id = ?
       `).bind(company, contact, email, phone, notes, status, id).run();
       feedbackMessage = "Success: Changes committed inline.";
+      return Astro.redirect(`/dashboard/clients?view=${viewMode}&statusFilter=${activeFilter}`);
     }
 
     if (action === "archive") {
@@ -78,191 +79,24 @@ const clientsList = (await db.prepare(baseQuery).bind(...queryParams).all()).res
 ---
 
 <Layout title="CRM Enterprise Directory | JSOS Core Control">
-  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
+  <main class="max-w-7xl mx-auto p-4 md:p-8 space-y-6 w-full box-border overflow-hidden">
     
-    <div class="flex justify-between items-end border-b border-slate-800 pb-6">
+    <div class="flex justify-between items-end border-b border-slate-800 pb-4 flex-wrap gap-4">
       <div>
         <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Enterprise Workspace</span>
-        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">CRM Client Directory</h1>
+        <h1 class="text-2xl font-extrabold text-white tracking-tight mt-1">CRM Client Directory</h1>
       </div>
       <div class="flex gap-2 font-mono text-xs">
-        <a href="?view=active" class={`px-4 py-2 rounded-xl border font-bold transition ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Active Scopes</a>
-        <a href="?view=archived" class={`px-4 py-2 rounded-xl border font-bold transition ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived Vault</a>
+        <a href="?view=active" class={`px-3 py-1.5 rounded-lg border font-bold transition ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Active</a>
+        <a href="?view=archived" class={`px-3 py-1.5 rounded-lg border font-bold transition ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived</a>
       </div>
     </div>
 
     {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
 
-    <div class="grid grid-cols-1 xl:grid-cols-4 gap-8">
+    <div class="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start w-full">
       
-      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Onboard Corporate Profile</h3>
-        <form method="POST" class="space-y-4">
+      <div class="bg-brand-surface/80 border border-slate-800 rounded-xl p-5 shadow-xl h-fit w-full box-border">
+        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Onboard Corporate Profile</h3>
+        <form method="POST" class="space-y-3">
           <input type="hidden" name="actionType" value="create" />
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Company Name *</label>
-            <input type="text" name="companyName" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
-          </div>
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Contact Person *</label>
-            <input type="text" name="contactName" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
-          </div>
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Business Email *</label>
-            <input type="email" name="email" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
-          </div>
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Phone Link</label>
-            <input type="text" name="phone" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
-          </div>
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Lifecycle Classification *</label>
-            <select name="status" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary">
-              <option value="New Prospect">New Prospect</option>
-              <option value="Strategic Negotiation">Strategic Negotiation</option>
-              <option value="Active Managed Client">Active Managed Client</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Technical Notes</label>
-            <textarea name="notes" rows="3" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary resize-none"></textarea>
-          </div>
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono tracking-wide">
-            Execute Client Entry
-          </button>
-        </form>
-      </div>
-
-      <div class="xl:col-span-3 space-y-4">
-        <div class="flex items-center justify-between bg-brand-surface/40 border border-slate-800 px-4 py-3 rounded-xl">
-          <form method="GET" class="flex items-center gap-3">
-            <input type="hidden" name="view" value={viewMode} />
-            <label class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">Dynamic Categorisation Filter:</label>
-            <select name="statusFilter" onchange="this.form.submit()" class="bg-brand-canvas border border-slate-800 rounded-lg text-xs text-slate-300 px-3 py-1.5 focus:outline-none focus:border-brand-primary">
-              <option value="All" selected={activeFilter === 'All'}>All Classifications</option>
-              <option value="New Prospect" selected={activeFilter === 'New Prospect'}>New Prospect</option>
-              <option value="Strategic Negotiation" selected={activeFilter === 'Strategic Negotiation'}>Strategic Negotiation</option>
-              <option value="Active Managed Client" selected={activeFilter === 'Active Managed Client'}>Active Managed Client</option>
-            </select>
-          </form>
-        </div>
-
-        <div class="overflow-x-auto border border-slate-800 rounded-2xl bg-brand-surface/30 shadow-2xl">
-          <table class="min-w-full divide-y divide-slate-800 text-left">
-            <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
-              <tr>
-                <th class="px-6 py-4">Company Entity</th>
-                <th class="px-6 py-4">Primary Contact</th>
-                <th class="px-6 py-4">Operational Status</th>
-                <th class="px-6 py-4">Communication Parameters</th>
-                <th class="px-6 py-4 text-right">Console Controls</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
-              {clientsList.map((client: any) => {
-                const isEditing = editTargetId === client.id;
-                const formId = `form-client-${client.id}`;
-
-                return (
-                  <tr class="hover:bg-slate-900/40 transition-colors duration-150">
-                    {isEditing && (
-                      <form method="POST" id={formId}>
-                        <input type="hidden" name="actionType" value="update" />
-                        <input type="hidden" name="itemId" value={client.id} />
-                      </form>
-                    )}
-
-                    <td class="px-6 py-4">
-                      {isEditing ? (
-                        <div class="space-y-1">
-                          <input type="text" name="companyName" value={client.company_name} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-brand-primary" />
-                          <input type="text" name="notes" value={client.infrastructure_notes} form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-400 w-full focus:outline-none" />
-                        </div>
-                      ) : (
-                        <div>
-                          <div class="font-bold text-white">{client.company_name}</div>
-                          <div class="text-[10px] text-slate-500 font-mono truncate max-w-xs mt-0.5">{client.infrastructure_notes || "No historical logs appended."}</div>
-                        </div>
-                      )}
-                    </td>
-
-                    <td class="px-6 py-4">
-                      {isEditing ? (
-                        <input type="text" name="contactName" value={client.contact_name} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white focus:outline-none w-28" />
-                      ) : (
-                        <span class="font-medium">{client.contact_name}</span>
-                      )}
-                    </td>
-
-                    <td class="px-6 py-4">
-                      {isEditing ? (
-                        <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white focus:outline-none">
-                          <option value="New Prospect" selected={client.status === "New Prospect"}>New Prospect</option>
-                          <option value="Strategic Negotiation" selected={client.status === "Strategic Negotiation"}>Strategic Negotiation</option>
-                          <option value="Active Managed Client" selected={client.status === "Active Managed Client"}>Active Managed Client</option>
-                        </select>
-                      ) : (
-                        <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border ${client.status === 'Active Managed Client' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
-                          {client.status}
-                        </span>
-                      )}
-                    </td>
-
-                    <td class="px-6 py-4 font-mono text-[11px]">
-                      {isEditing ? (
-                        <div class="space-y-1">
-                          <input type="email" name="email" value={client.email} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-white focus:outline-none" />
-                          <input type="text" name="phone" value={client.phone || ""} form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-white focus:outline-none" />
-                        </div>
-                      ) : (
-                        <div>
-                          <div class="text-slate-300">{client.email}</div>
-                          <div class="text-slate-500 mt-0.5">{client.phone || "No Link Line"}</div>
-                        </div>
-                      )}
-                    </td>
-
-                    <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap font-mono text-[11px]">
-                      {isEditing ? (
-                        <>
-                          <button type="submit" form={formId} class="text-emerald-400 hover:underline font-bold">Save</button>
-                          <span class="text-slate-800">|</span>
-                          <a href={`?statusFilter=${activeFilter}&view=${viewMode}`} class="text-slate-500 hover:underline">Cancel</a>
-                        </>
-                      ) : viewMode === 'active' ? (
-                        <>
-                          <a href={`?editId=${client.id}&statusFilter=${activeFilter}&view=${viewMode}`} class="text-brand-accent hover:underline">Edit</a>
-                          <span class="text-slate-800">|</span>
-                          <form method="POST" class="inline">
-                            <input type="hidden" name="actionType" value="archive" />
-                            <input type="hidden" name="itemId" value={client.id} />
-                            <button type="submit" class="text-amber-500 hover:underline">Archive</button>
-                          </form>
-                        </>
-                      ) : (
-                        <>
-                          <form method="POST" class="inline">
-                            <input type="hidden" name="actionType" value="restore" />
-                            <input type="hidden" name="itemId" value={client.id} />
-                            <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
-                          </form>
-                          <span class="text-slate-800">|</span>
-                          <form method="POST" class="inline" onsubmit="return confirm('PERMANENT DESTRUCTION AUDIT WARNING: Wipe item completely?');">
-                            <input type="hidden" name="actionType" value="purge" />
-                            <input type="hidden" name="itemId" value={client.id} />
-                            <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
-                          </form>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-    </div>
-  </main>
-</Layout>
