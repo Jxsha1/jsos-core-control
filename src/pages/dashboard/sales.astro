@@ -3,7 +3,6 @@ import Layout from '../../layouts/Layout.astro';
 
 const db = Astro.locals.runtime.env.DB;
 const r2 = Astro.locals.runtime.env.INVOICE_VAULT;
-let feedbackMessage = "";
 
 const stageFilter = Astro.url.searchParams.get('stageFilter') || 'All';
 const viewMode = Astro.url.searchParams.get('view') || 'active';
@@ -17,68 +16,71 @@ if (Astro.request.method === "POST") {
     if (action === "create") {
       const clientId = formData.get("clientId");
       const title = formData.get("title");
-      const grossValue = formData.get("grossValue");
-      const stage = formData.get("stage") || "Discovery"; // Enforces Discovery initial default fallback configuration
-      const contractFile = formData.get("contractFile") as File;
-
-      let r2Key = null; let filename = null;
-      if (contractFile && contractFile.size > 0) {
-        filename = contractFile.name;
-        r2Key = `contracts/${crypto.randomUUID()}-${filename}`;
-        await r2.put(r2Key, Buffer.from(await contractFile.arrayBuffer()), { contentType: contractFile.type });
-      }
+      const stage = formData.get("stage") || "Discovery";
+      
+      const isFlatFee = formData.get("isFlatFee") === "1" ? 1 : 0;
+      const flatFeeAmount = isFlatFee ? parseFloat(formData.get("flatFeeAmount")?.toString() || "0") : 0;
+      const isRecurring = formData.get("isRecurring") === "1" ? 1 : 0;
+      const recurringInterval = isRecurring ? formData.get("recurringInterval")?.toString() : null;
+      const recurringAmount = isRecurring ? parseFloat(formData.get("recurringAmount")?.toString() || "0") : 0;
+      
+      const calculatedGross = flatFeeAmount + recurringAmount;
 
       await db.prepare(`
-        INSERT INTO opportunities (id, client_id, title, gross_value, stage, contract_r2_key, contract_filename, is_archived)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-      `).bind(crypto.randomUUID(), clientId, title, parseFloat(grossValue.toString()), stage, r2Key, filename).run();
-      feedbackMessage = "Success: Sales progression record locked at Discovery baseline.";
+        INSERT INTO opportunities (id, client_id, title, is_flat_fee, flat_fee_amount, is_recurring, recurring_interval, recurring_amount, gross_value, stage, price_history, is_archived)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0)
+      `).bind(crypto.randomUUID(), clientId, title, isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, calculatedGross, stage).run();
     }
 
     if (action === "update") {
       const id = formData.get("itemId");
       const title = formData.get("title");
-      const grossValue = formData.get("grossValue");
       const stage = formData.get("stage");
+      
+      const isFlatFee = formData.get("isFlatFee") === "1" ? 1 : 0;
+      const flatFeeAmount = isFlatFee ? parseFloat(formData.get("flatFeeAmount")?.toString() || "0") : 0;
+      const isRecurring = formData.get("isRecurring") === "1" ? 1 : 0;
+      const recurringInterval = isRecurring ? formData.get("recurringInterval")?.toString() : null;
+      const recurringAmount = isRecurring ? parseFloat(formData.get("recurringAmount")?.toString() || "0") : 0;
+      
+      const calculatedGross = flatFeeAmount + recurringAmount;
+
+      const current = await db.prepare("SELECT gross_value, price_history FROM opportunities WHERE id = ?").bind(id).first();
+      let updatedHistory = current?.price_history || "";
+      
+      if (current && current.gross_value !== calculatedGross) {
+        const timestamp = new Date().toISOString().split('T')[0];
+        updatedHistory += `[${timestamp} Altered from £${current.gross_value} to £${calculatedGross}] `;
+      }
 
       await db.prepare(`
-        UPDATE opportunities SET title = ?, gross_value = ?, stage = ? WHERE id = ?
-      `).bind(title, parseFloat(grossValue.toString()), stage, id).run();
-      feedbackMessage = "Success: Pipeline data modifications committed inline.";
+        UPDATE opportunities SET title = ?, is_flat_fee = ?, flat_fee_amount = ?, is_recurring = ?, recurring_interval = ?, recurring_amount = ?, gross_value = ?, stage = ?, price_history = ? WHERE id = ?
+      `).bind(title, isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, calculatedGross, stage, updatedHistory, id).run();
+      
+      return Astro.redirect(`/dashboard/sales?view=${viewMode}&stageFilter=${stageFilter}`);
     }
 
     if (action === "archive") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE opportunities SET is_archived = 1 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Deal tracked parameters relocated to archives.";
     }
 
     if (action === "restore") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE opportunities SET is_archived = 0 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Deal returned to active matrix streams.";
     }
 
     if (action === "purge") {
       const id = formData.get("itemId");
-      const record = await db.prepare("SELECT contract_r2_key FROM opportunities WHERE id = ?").bind(id).first();
-      if (record?.contract_r2_key) await r2.delete(record.contract_r2_key);
-      
       await db.prepare("DELETE FROM opportunities WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Hardware nodes wiped completely.";
     }
-  } catch (err: any) {
-    feedbackMessage = `Acquisition Fault Boundary: ${err.message}`;
+  } catch (err) {
+    console.error(err);
   }
 }
 
-let baseQuery = `
-  SELECT o.*, c.company_name FROM opportunities o 
-  JOIN clients c ON o.client_id = c.id 
-  WHERE o.is_archived = ?
-`;
-const queryParams: any[] = [viewMode === 'archived' ? 1 : 0];
-
+let baseQuery = "SELECT o.*, c.company_name FROM opportunities o JOIN clients c ON o.client_id = c.id WHERE o.is_archived = ?";
+const queryParams = [viewMode === 'archived' ? 1 : 0];
 if (stageFilter !== 'All') {
   baseQuery += " AND o.stage = ?";
   queryParams.push(stageFilter);
@@ -87,104 +89,96 @@ baseQuery += " ORDER BY o.gross_value DESC";
 
 const opportunitiesList = (await db.prepare(baseQuery).bind(...queryParams).all()).results || [];
 const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHERE is_archived = 0 ORDER BY company_name ASC").all()).results || [];
-
-// Linear Stepper Stages Layout Construction Rules Array
-const visualProgressionSteps = [
-  { key: 'Discovery', label: 'Discovery' },
-  { key: 'Official Quote', label: 'Quote Sent' },
-  { key: 'Contract Negotiation', label: 'Negotiation' },
-  { key: 'Contract Won', label: 'Won' } // Handled automatically via invoice link trigger parameters
-];
+const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key: 'Official Quote', label: 'Quote Sent' }, { key: 'Contract Negotiation', label: 'Negotiation' }, { key: 'Contract Won', label: 'Won' }];
 ---
 
 <Layout title="Bespoke Pipeline Tracking Management | JSOS Core Control">
-  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
+  <main class="max-w-7xl mx-auto p-4 md:p-8 space-y-8 w-full box-border overflow-hidden">
     
-    <div class="flex justify-between items-end border-b border-slate-800 pb-6">
+    <div class="flex justify-between items-end border-b border-slate-800 pb-4 flex-wrap gap-4">
       <div>
         <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Deal Flow Infrastructure</span>
-        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Sales Tracker & Contracts</h1>
+        <h1 class="text-2xl font-extrabold text-white tracking-tight mt-1">Sales Tracker & Contracts</h1>
       </div>
       <div class="flex gap-2 font-mono text-xs">
-        <a href="?view=active" class={`px-4 py-2 rounded-xl border font-bold transition ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Pipeline Workspace</a>
-        <a href="?view=archived" class={`px-4 py-2 rounded-xl border font-bold transition ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived Repository</a>
+        <a href="?view=active" class={`px-3 py-1.5 rounded-lg border transition ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Pipeline</a>
+        <a href="?view=archived" class={`px-3 py-1.5 rounded-lg border transition ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived</a>
       </div>
     </div>
 
-    {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
-
-    <div class="grid grid-cols-1 xl:grid-cols-4 gap-8">
+    <div class="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start w-full">
       
-      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Initialize Acquisition Log</h3>
-        <form method="POST" enctype="multipart/form-data" class="space-y-4">
+      <div class="bg-brand-surface/80 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4 w-full box-border">
+        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Initialize Acquisition Log</h3>
+        <form method="POST" class="space-y-3">
           <input type="hidden" name="actionType" value="create" />
           
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Client profile *</label>
-            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none">
-              <option value="">Select Target Account</option>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Client *</label>
+            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white">
+              <option value="">Select Account</option>
               {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
             </select>
           </div>
 
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Deal Title Reference *</label>
-            <input type="text" name="title" required placeholder="e.g. Server Array Support Suite" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white" />
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Project Title Reference *</label>
+            <input type="text" name="title" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white" />
           </div>
 
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Gross Proposal Value (£) *</label>
-            <input type="number" name="grossValue" step="0.01" required placeholder="2400" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white" />
+          <div class="border border-slate-800/80 p-2.5 rounded-lg bg-brand-canvas/30 space-y-2">
+            <div class="flex justify-between items-center text-[11px]">
+              <span class="font-bold text-slate-400 uppercase">Flat Fee?</span>
+              <div class="flex gap-2">
+                <label><input type="radio" name="isFlatFee" value="1" checked onchange="document.getElementById('salesFlat').style.display='block'" /> Yes</label>
+                <label><input type="radio" name="isFlatFee" value="0" onchange="document.getElementById('salesFlat').style.display='none'; document.getElementById('salesFlatPrice').value='0'" /> No</label>
+              </div>
+            </div>
+            <div id="salesFlat"><input type="number" id="salesFlatPrice" name="flatFeeAmount" step="0.01" placeholder="Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" /></div>
+          </div>
+
+          <div class="border border-slate-800/80 p-2.5 rounded-lg bg-brand-canvas/30 space-y-2">
+            <div class="flex justify-between items-center text-[11px]">
+              <span class="font-bold text-slate-400 uppercase">Recurring?</span>
+              <div class="flex gap-2">
+                <label><input type="radio" name="isRecurring" value="1" onchange="document.getElementById('salesRec').style.display='block'" /> Yes</label>
+                <label><input type="radio" name="isRecurring" value="0" checked onchange="document.getElementById('salesRec').style.display='none'; document.getElementById('salesRecPrice').value='0'" /> No</label>
+              </div>
+            </div>
+            <div id="salesRec" class="space-y-1.5 hidden">
+              <select name="recurringInterval" class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white">
+                <option value="Weekly">Weekly</option><option value="Monthly">Monthly</option><option value="Yearly">Yearly</option>
+              </select>
+              <input type="number" id="salesRecPrice" name="recurringAmount" step="0.01" placeholder="Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
+            </div>
           </div>
 
           <div>
             <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Entry Stage *</label>
-            <select name="stage" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white">
-              <option value="Discovery" selected>Discovery (Initial Estimate)</option>
-              <option value="Official Quote">Official Quote Out</option>
+            <select name="stage" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white">
+              <option value="Discovery" selected>Discovery (Initial Default)</option>
+              <option value="Official Quote">Official Quote</option>
               <option value="Contract Negotiation">Contract Negotiation</option>
-              <option value="Contract Lost">Contract Lost (Dropped Deal)</option>
+              <option value="Contract Lost">Contract Lost</option>
             </select>
           </div>
 
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Upload Executive Contract / PDF</label>
-            <input type="file" name="contractFile" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-[11px] file:bg-slate-800 file:text-slate-200 cursor-pointer" />
-          </div>
-
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono">
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-2 rounded-lg transition font-mono">
             Execute Pipeline Mappings
           </button>
         </form>
       </div>
 
-      <div class="xl:col-span-3 space-y-4">
-        
-        <div class="flex items-center justify-between bg-brand-surface/40 border border-slate-800 px-4 py-3 rounded-xl">
-          <form method="GET" class="flex items-center gap-3">
-            <input type="hidden" name="view" value={viewMode} />
-            <label class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">Isolate Workflow Stage Matrix:</label>
-            <select name="stageFilter" onchange="this.form.submit()" class="bg-brand-canvas border border-slate-800 rounded-lg text-xs text-slate-300 px-3 py-1.5 focus:outline-none focus:border-brand-primary">
-              <option value="All" selected={stageFilter === 'All'}>All Progression Stages</option>
-              <option value="Discovery" selected={stageFilter === 'Discovery'}>Discovery</option>
-              <option value="Official Quote" selected={stageFilter === 'Official Quote'}>Official Quote</option>
-              <option value="Contract Negotiation" selected={stageFilter === 'Contract Negotiation'}>Contract Negotiation</option>
-              <option value="Contract Won" selected={stageFilter === 'Contract Won'}>Contract Won</option>
-              <option value="Contract Lost" selected={stageFilter === 'Contract Lost'}>Contract Lost</option>
-            </select>
-          </form>
-        </div>
-
-        <div class="overflow-x-auto border border-slate-800 rounded-2xl bg-brand-surface/30 shadow-2xl">
-          <table class="min-w-full divide-y divide-slate-800 text-left">
+      <div class="xl:col-span-3 space-y-4 w-full overflow-hidden">
+        <div class="overflow-x-auto border border-slate-800 rounded-xl bg-brand-surface/30 shadow-2xl w-full">
+          <table class="w-full min-w-full divide-y divide-slate-800 text-left table-fixed">
             <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
               <tr>
-                <th class="px-6 py-4">Opportunity Project Title</th>
-                <th class="px-6 py-4">Corporate Client</th>
-                <th class="px-6 py-4">Financial Value</th>
-                <th class="px-6 py-4">Deal Progression Lifecycles (Unified Row View)</th>
-                <th class="px-6 py-4 text-right">Console Controls</th>
+                <th class="px-4 py-3 w-1/4">Project Reference</th>
+                <th class="px-4 py-3 w-1/6">Corporate Client</th>
+                <th class="px-4 py-3 w-1/5">Financial Value</th>
+                <th class="px-4 py-3 w-1/4">Progression Steps</th>
+                <th class="px-4 py-3 text-right w-1/6">Controls</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
@@ -193,7 +187,7 @@ const visualProgressionSteps = [
                 const formId = `form-sales-${deal.id}`;
 
                 return (
-                  <tr class="hover:bg-slate-900/40 transition-colors duration-150">
+                  <tr class="hover:bg-slate-900/30 transition">
                     {isEditing && (
                       <form method="POST" id={formId}>
                         <input type="hidden" name="actionType" value="update" />
@@ -201,27 +195,37 @@ const visualProgressionSteps = [
                       </form>
                     )}
 
-                    <td class="px-6 py-4">
+                    <td class="px-4 py-3 truncate">
                       {isEditing ? (
-                        <input type="text" name="title" value={deal.title} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
+                        <input type="text" name="title" value={deal.title} form={formId} required class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
                       ) : (
-                        <span class="font-bold text-white">{deal.title}</span>
+                        <div>
+                          <div class="font-bold text-white truncate">{deal.title}</div>
+                          {deal.price_history && <div class="text-[9px] text-amber-400 font-mono mt-0.5 truncate" title={deal.price_history}>{deal.price_history}</div>}
+                        </div>
                       )}
                     </td>
 
-                    <td class="px-6 py-4 font-medium text-slate-400">{deal.company_name}</td>
+                    <td class="px-4 py-3 text-slate-400 truncate font-medium">{deal.company_name}</td>
 
-                    <td class="px-6 py-4 font-mono font-bold text-white">
+                    <td class="px-4 py-3 font-mono text-[11px]">
                       {isEditing ? (
-                        <input type="number" name="grossValue" step="0.01" value={deal.gross_value} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-20" />
+                        <div class="space-y-1 p-1 bg-brand-canvas/60 border border-slate-800 rounded text-[10px]">
+                          <label class="flex justify-between items-center"><span>Flat:</span><input type="number" name="flatFeeAmount" step="0.01" value={deal.flat_fee_amount} form={formId} class="w-16 bg-brand-surface text-white px-1" /></label>
+                          <label class="flex justify-between items-center"><span>Rec:</span><input type="number" name="recurringAmount" step="0.01" value={deal.recurring_amount} form={formId} class="w-16 bg-brand-surface text-white px-1" /></label>
+                          <input type="hidden" name="isFlatFee" value="1" form={formId} /><input type="hidden" name="isRecurring" value={deal.is_recurring} form={formId} /><input type="hidden" name="recurringInterval" value={deal.recurring_interval} form={formId} />
+                        </div>
                       ) : (
-                        <span>£{deal.gross_value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</span>
+                        <div>
+                          <div class="font-bold text-white">£{deal.gross_value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>
+                          <div class="text-[9px] text-slate-500">F: £{deal.flat_fee_amount} | R: £{deal.recurring_amount}</div>
+                        </div>
                       )}
                     </td>
 
-                    <td class="px-6 py-4 whitespace-nowrap">
+                    <td class="px-4 py-3 whitespace-nowrap">
                       {isEditing ? (
-                        <select name="stage" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white">
+                        <select name="stage" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-full">
                           <option value="Discovery" selected={deal.stage === "Discovery"}>Discovery</option>
                           <option value="Official Quote" selected={deal.stage === "Official Quote"}>Official Quote</option>
                           <option value="Contract Negotiation" selected={deal.stage === "Contract Negotiation"}>Contract Negotiation</option>
@@ -229,20 +233,16 @@ const visualProgressionSteps = [
                           <option value="Contract Lost" selected={deal.stage === "Contract Lost"}>Contract Lost</option>
                         </select>
                       ) : deal.stage === 'Contract Lost' ? (
-                        <span class="text-rose-500 font-mono font-bold text-[10px] bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded">❌ CONTRACT REJECTED / PIPELINE LOST</span>
+                        <span class="text-rose-500 font-mono font-bold text-[9px] bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 rounded">LOST PIPELINE</span>
                       ) : (
-                        /* Horizontal linear mapping visual sequence display node row */
-                        <div class="flex items-center gap-1 font-mono text-[9px] font-bold">
+                        <div class="flex items-center gap-0.5 font-mono text-[8px] font-bold">
                           {visualProgressionSteps.map((step, idx) => {
                             const isCurrent = deal.stage === step.key;
                             const isPast = visualProgressionSteps.findIndex(s => s.key === deal.stage) >= idx;
-
                             return (
                               <>
-                                <span class={`px-2 py-0.5 rounded border transition ${isCurrent ? 'bg-brand-accent text-brand-canvas border-brand-accent font-extrabold shadow-sm' : isPast ? 'bg-brand-primary/20 text-brand-accent border-brand-primary/30' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
-                                  {step.label}
-                                </span>
-                                {idx < 3 && <span class={`text-xs ${isPast ? 'text-brand-primary' : 'text-slate-800'}`}>&rarr;</span>}
+                                <span class={`px-1 py-0.5 rounded border ${isCurrent ? 'bg-brand-accent text-brand-canvas border-brand-accent' : isPast ? 'bg-brand-primary/20 text-brand-accent border-brand-primary/20' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>{step.label}</span>
+                                {idx < 3 && <span class="text-slate-700">&rarr;</span>}
                               </>
                             );
                           })}
@@ -250,37 +250,34 @@ const visualProgressionSteps = [
                       )}
                     </td>
 
-                    <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap font-mono text-[11px]">
+                    <td class="px-4 py-3 text-right whitespace-nowrap font-mono text-[11px]">
                       {isEditing ? (
-                        <>
-                          <button type="submit" form={formId} class="text-emerald-400 hover:underline font-bold">Save</button>
+                        <div class="space-x-1">
+                          <button type="submit" form={formId} class="text-emerald-400 font-bold hover:underline">Save</button>
                           <span class="text-slate-800">|</span>
-                          <a href={`?stageFilter=${stageFilter}&view=${viewMode}`} class="text-slate-500 hover:underline">Cancel</a>
-                        </>
+                          <a href="?" class="text-slate-500 hover:underline">Cancel</a>
+                        </div>
                       ) : viewMode === 'active' ? (
-                        <>
-                          <a href={`?editId=${deal.id}&stageFilter=${stageFilter}&view=${viewMode}`} class="text-brand-accent hover:underline">Edit</a>
+                        <div class="space-x-1">
+                          <a href={`?editId=${deal.id}&stageFilter=${stageFilter}`} class="text-brand-accent hover:underline">Edit</a>
                           <span class="text-slate-800">|</span>
                           <form method="POST" class="inline">
-                            <input type="hidden" name="actionType" value="archive" />
-                            <input type="hidden" name="itemId" value={deal.id} />
+                            <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={deal.id} />
                             <button type="submit" class="text-amber-500 hover:underline">Archive</button>
                           </form>
-                        </>
+                        </div>
                       ) : (
-                        <>
+                        <div class="space-x-1">
                           <form method="POST" class="inline">
-                            <input type="hidden" name="actionType" value="restore" />
-                            <input type="hidden" name="itemId" value={deal.id} />
+                            <input type="hidden" name="actionType" value="restore" /><input type="hidden" name="itemId" value={deal.id} />
                             <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
                           </form>
                           <span class="text-slate-800">|</span>
-                          <form method="POST" class="inline" onsubmit="return confirm('CRITICAL WARNING: Purge data deal block row?');">
-                            <input type="hidden" name="actionType" value="purge" />
-                            <input type="hidden" name="itemId" value={deal.id} />
-                            <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
+                          <form method="POST" class="inline" onsubmit="return confirm('Wipe element?');">
+                            <input type="hidden" name="actionType" value="purge" /><input type="hidden" name="itemId" value={deal.id} />
+                            <button type="submit" class="text-rose-500 font-bold hover:underline">Purge</button>
                           </form>
-                        </>
+                        </div>
                       )}
                     </td>
                   </tr>
