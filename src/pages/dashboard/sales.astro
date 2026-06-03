@@ -26,13 +26,14 @@ if (Astro.request.method === "POST") {
       
       const calculatedGross = flatFeeAmount + recurringAmount;
 
-      // Computes target execution timestamp using proper UK date layouts
       const date = new Date();
       const dd = String(date.getDate()).padStart(2, '0');
       const mm = String(date.getMonth() + 1).padStart(2, '0');
       const yy = String(date.getFullYear()).slice(-2);
       const dateStr = `${dd}/${mm}/${yy}`;
-      const initialLog = `${stage} - £${calculatedGross.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
+      
+      const logDisplayStage = stage === "Official Quote" ? "Quote" : stage;
+      const initialLog = `${logDisplayStage} - £${calculatedGross.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
 
       await db.prepare(`
         INSERT INTO opportunities (id, client_id, title, is_flat_fee, flat_fee_amount, is_recurring, recurring_interval, recurring_amount, gross_value, stage, price_history, is_archived)
@@ -62,7 +63,9 @@ if (Astro.request.method === "POST") {
         const mm = String(date.getMonth() + 1).padStart(2, '0');
         const yy = String(date.getFullYear()).slice(-2);
         const dateStr = `${dd}/${mm}/${yy}`;
-        const logEntry = `${stage} - £${calculatedGross.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
+        
+        const logDisplayStage = stage === "Official Quote" ? "Quote" : stage;
+        const logEntry = `${logDisplayStage} - £${calculatedGross.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
         updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
       }
 
@@ -102,7 +105,7 @@ baseQuery += " ORDER BY o.gross_value DESC";
 
 const opportunitiesList = (await db.prepare(baseQuery).bind(...queryParams).all()).results || [];
 const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHERE is_archived = 0 ORDER BY company_name ASC").all()).results || [];
-const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key: 'Official Quote', label: 'Quote Sent' }, { key: 'Contract Negotiation', label: 'Negotiation' }, { key: 'Contract Won', label: 'Won' }];
+const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key: 'Official Quote', label: 'Quote' }, { key: 'Contract Negotiation', label: 'Negotiation' }, { key: 'Contract Won', label: 'Won' }];
 ---
 
 <Layout title="Bespoke Pipeline Tracking Management | JSOS Core Control">
@@ -169,8 +172,8 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
           <div>
             <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Entry Stage *</label>
             <select name="stage" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white">
-              <option value="Discovery" selected>Discovery (Initial Default)</option>
-              <option value="Official Quote">Official Quote</option>
+              <option value="Discovery" selected>Discovery</option>
+              <option value="Official Quote">Quote</option>
               <option value="Contract Negotiation">Contract Negotiation</option>
               <option value="Contract Lost">Contract Lost</option>
             </select>
@@ -237,7 +240,7 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                       {isEditing ? (
                         <select name="stage" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-full">
                           <option value="Discovery" selected={deal.stage === "Discovery"}>Discovery</option>
-                          <option value="Official Quote" selected={deal.stage === "Official Quote"}>Official Quote</option>
+                          <option value="Official Quote" selected={deal.stage === "Official Quote"}>Quote</option>
                           <option value="Contract Negotiation" selected={deal.stage === "Contract Negotiation"}>Contract Negotiation</option>
                           <option value="Contract Won" selected={deal.stage === "Contract Won"}>Contract Won</option>
                           <option value="Contract Lost" selected={deal.stage === "Contract Lost"}>Contract Lost</option>
