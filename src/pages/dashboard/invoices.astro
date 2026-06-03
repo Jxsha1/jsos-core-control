@@ -3,184 +3,253 @@ import Layout from '../../layouts/Layout.astro';
 
 const db = Astro.locals.runtime.env.DB;
 const r2 = Astro.locals.runtime.env.INVOICE_VAULT;
+let feedbackMessage = "";
 
-let invoicesList: any[] = [];
-let clientsList: any[] = [];
-let financialFeedback = "";
+const viewMode = Astro.url.searchParams.get('view') || 'active';
+const editTargetId = Astro.url.searchParams.get('editId') || null;
 
-// Handle native server-side invoice compilation on the same page loop
 if (Astro.request.method === "POST") {
   try {
     const formData = await Astro.request.formData();
-    const clientId = formData.get("clientId");
-    const invoiceNumber = formData.get("invoiceNumber");
-    const itemDescription = formData.get("itemDescription");
-    const itemCostRaw = formData.get("itemCost");
+    const action = formData.get("actionType");
 
-    if (clientId && invoiceNumber && itemDescription && itemCostRaw) {
-      const itemCost = parseFloat(itemCostRaw.toString());
-      
-      // Enforce our strict 14-day corporate net-payment cycle parameters
-      const issuedDate = new Date();
-      const dueDate = new Date();
-      dueDate.setDate(issuedDate.getDate() + 14);
+    if (action === "create") {
+      const clientId = formData.get("clientId");
+      const prefix = formData.get("prefix"); // 'JLDS' or 'JJS'
+      const description = formData.get("itemDescription");
+      const costRaw = formData.get("itemCost");
 
-      const issuedStr = issuedDate.toISOString().split('T')[0];
-      const dueStr = dueDate.toISOString().split('T')[0];
-      
-      const invoiceId = crypto.randomUUID();
-      const r2StorageKey = `archives/${invoiceId}.json`;
+      if (clientId && prefix && description && costRaw) {
+        const cost = parseFloat(costRaw.toString());
+        
+        // 1. Fetch Target Profile Company Name for Abbreviation Calculation
+        const client = await db.prepare("SELECT company_name FROM clients WHERE id = ?").bind(clientId).first();
+        if (!client) throw new Error("Target profile object mismatch.");
+        
+        const name = client.company_name.trim();
+        const words = name.split(/\s+/);
+        let abbreviation = "";
+        
+        if (words.length === 1) {
+          abbreviation = name.substring(0, 4).toUpperCase();
+        } else {
+          abbreviation = words.map((w: string) => w[0]).join("").toUpperCase();
+        }
 
-      // 1. Compile structured data payload representing the invoice elements
-      const structuredInvoicePayload = {
-        id: invoiceId,
-        invoiceNumber: invoiceNumber.toString(),
-        clientId: clientId.toString(),
-        totalGrossAmount: itemCost,
-        currency: 'GBP',
-        issuedDate: issuedStr,
-        dueDate: dueStr,
-        lineItems: [
-          { description: itemDescription.toString(), cost: itemCost }
-        ],
-        legalNotice: 'Regulated under England & Wales Jurisdiction. Security Framework alignment: Cyber Essentials.'
-      };
+        // 2. Fetch Global Database Invoices Rows Count to Determine the Next Sequential ID
+        const counterScan = await db.prepare("SELECT COUNT(*) as count FROM invoices").first();
+        const nextSequenceId = (counterScan?.count || 0) + 1;
 
-      // 2. Stream transaction payload directly to our Cloudflare R2 Vault
-      await r2.put(r2StorageKey, JSON.stringify(structuredInvoicePayload, null, 2), {
-        customMetadata: { invoiceNumber: invoiceNumber.toString(), clientId: clientId.toString() },
-        contentType: 'application/json'
-      });
+        // 3. Assemble the Automated Corporate Invoice Identifier Payload Name
+        const generatedInvoiceNumber = `${prefix}-${abbreviation}-${nextSequenceId}`;
 
-      const r2VirtualUrl = `/vault/access/invoices/${invoiceId}`;
+        const issuedStr = new Date().toISOString().split('T')[0];
+        const due = new Date(); due.setDate(due.getDate() + 14);
+        const dueStr = due.toISOString().split('T')[0];
+        
+        const invoiceId = crypto.randomUUID();
+        const r2Key = `archives/${invoiceId}.json`;
 
-      // 3. Register index record into the live Cloudflare D1 SQL relational database
+        const payload = { id: invoiceId, invoiceNumber: generatedInvoiceNumber, clientId, total: cost, breakdown: description };
+        await r2.put(r2Key, JSON.stringify(payload, null, 2), { contentType: 'application/json' });
+
+        await db.prepare(`
+          INSERT INTO invoices (id, client_id, invoice_number, amount_due, currency, status, issued_date, due_date, r2_archive_url, is_archived)
+          VALUES (?, ?, ?, ?, 'GBP', 'Sent', ?, ?, ?, 0)
+        `).bind(invoiceId, clientId, generatedInvoiceNumber, cost, issuedStr, dueStr, `/vault/${invoiceId}`).run();
+
+        feedbackMessage = `Success: Compiled transaction reference name: ${generatedInvoiceNumber}`;
+      }
+    }
+
+    if (action === "update") {
+      const id = formData.get("itemId");
+      const costRaw = formData.get("itemCost");
+      const status = formData.get("status");
+
       await db.prepare(`
-        INSERT INTO invoices (id, client_id, invoice_number, amount_due, currency, status, issued_date, due_date, r2_archive_url)
-        VALUES (?, ?, ?, ?, 'GBP', 'Sent', ?, ?, ?)
-      `).bind(invoiceId, clientId, invoiceNumber, itemCost, issuedStr, dueStr, r2VirtualUrl).run();
+        UPDATE invoices SET amount_due = ?, status = ? WHERE id = ?
+      `).bind(parseFloat(costRaw.toString()), status, id).run();
+      feedbackMessage = "Success: Invoice data metrics modified inside ledger database.";
+    }
 
-      financialFeedback = `Success: Invoice ${invoiceNumber} compiled, written to R2 Vault, and registered to D1 Ledger.`;
+    if (action === "archive") {
+      const id = formData.get("itemId");
+      await db.prepare("UPDATE invoices SET is_archived = 1 WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Invoice row shifted to archived structures.";
+    }
+
+    if (action === "restore") {
+      const id = formData.get("itemId");
+      await db.prepare("UPDATE invoices SET is_archived = 0 WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Invoice row restored to operational viewing scopes.";
+    }
+
+    if (action === "purge") {
+      const id = formData.get("itemId");
+      await db.prepare("DELETE FROM invoices WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Financial data node fully executed and wiped.";
     }
   } catch (err: any) {
-    financialFeedback = `Financial System Error: ${err.message}`;
+    feedbackMessage = `Financial Matrix Exception: ${err.message}`;
   }
 }
 
-// Fetch live database assets during edge runtime execution to render tables dynamically
-try {
-  const iDataset = await db.prepare(`
-    SELECT i.*, c.company_name 
-    FROM invoices i 
-    JOIN clients c ON i.client_id = c.id 
-    ORDER BY i.issued_date DESC, i.invoice_number DESC
-  `).all();
-  invoicesList = iDataset.results || [];
-
-  const cDataset = await db.prepare("SELECT id, company_name FROM clients ORDER BY company_name ASC").all();
-  clientsList = cDataset.results || [];
-} catch (e) {
-  invoicesList = [];
+let editingItem: any = null;
+if (editTargetId) {
+  editingItem = await db.prepare("SELECT * FROM invoices WHERE id = ?").bind(editTargetId).first();
 }
+
+const invoicesList = (await db.prepare(`
+  SELECT i.*, c.company_name FROM invoices i 
+  JOIN clients c ON i.client_id = c.id 
+  WHERE i.is_archived = ? ORDER BY i.issued_date DESC
+`).bind(viewMode === 'archived' ? 1 : 0).all()).results || [];
+
+const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHERE is_archived = 0 ORDER BY company_name ASC").all()).results || [];
 ---
 
-<Layout title="JSOS Core Control | Automated Invoicing Hub">
+<Layout title="Invoice Generator & Ledger Vault | JSOS Core Control">
   <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
     
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-800 pb-6 gap-4">
+    <div class="flex justify-between items-end border-b border-slate-800 pb-6">
       <div>
-        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Automated Ledger Vault</span>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Automated Ledger</span>
         <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Invoice Generation Hub</h1>
       </div>
-      <div class="bg-brand-surface border border-slate-800 rounded-xl px-5 py-2.5 text-xs text-slate-400 max-w-xs leading-relaxed">
-        Storage Layer: Secure zero-egress <span class="text-brand-accent font-mono">Cloudflare R2</span> container.
+      <div class="flex gap-2">
+        <a href="?view=active" class={`px-4 py-2 rounded-xl text-xs font-bold border ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Active Ledger</a>
+        <a href="?view=archived" class={`px-4 py-2 rounded-xl text-xs font-bold border ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived Records</a>
       </div>
     </div>
 
-    {financialFeedback && (
-      <div class={`p-4 rounded-xl text-xs font-mono font-bold border ${financialFeedback.startsWith('Success') ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'}`}>
-        {financialFeedback}
-      </div>
-    )}
+    {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
       
       <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Compile Financial Ledger</h3>
+        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">{editingItem ? "Modify Ledger Entity" : "Compile Financial Ledger"}</h3>
         <form method="POST" class="space-y-4">
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Account Profile *</label>
-            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition">
-              <option value="">Select Debtor Client profile</option>
-              {clientsList.map(client => <option value={client.id}>{client.company_name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Invoice Reference Number *</label>
-            <input type="text" name="invoiceNumber" required placeholder="e.g. JSOS-2026-001" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
-          </div>
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Billable Item/Milestone Description *</label>
-            <input type="text" name="itemDescription" required placeholder="e.g. Fixed-Fee Out-of-Scope Infrastructure Migration" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
-          </div>
+          <input type="hidden" name="actionType" value={editingItem ? "update" : "create"} />
+          {editingItem && <input type="hidden" name="itemId" value={editingItem.id} />}
+
+          {!editingItem ? (
+            <>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Profile Debtor *</label>
+                <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
+                  <option value="">Select Target Account</option>
+                  {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Entity Identifier Prefix *</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <label class="border border-slate-800 bg-brand-canvas p-2.5 rounded-xl flex items-center justify-between text-xs cursor-pointer">
+                    <span>JLDS</span> <input type="radio" name="prefix" value="JLDS" checked required class="accent-brand-accent" />
+                  </label>
+                  <label class="border border-slate-800 bg-brand-canvas p-2.5 rounded-xl flex items-center justify-between text-xs cursor-pointer">
+                    <span>JJS</span> <input type="radio" name="prefix" value="JJS" class="accent-brand-accent" />
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Billable Item/Milestone Summary *</label>
+                <input type="text" name="itemDescription" required placeholder="e.g. Fixed-Fee Out-of-Scope Server Array Migration" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+              </div>
+            </>
+          ) : (
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Collection Payment Status *</label>
+              <select name="status" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
+                <option value="Draft" selected={editingItem.status === "Draft"}>Draft Mode</option>
+                <option value="Sent" selected={editingItem.status === "Sent"}>Sent / Outstanding</option>
+                <option value="Paid" selected={editingItem.status === "Paid"}>Paid / Settled</option>
+                <option value="Overdue" selected={editingItem.status === "Overdue"}>Overdue Ledger</option>
+              </select>
+            </div>
+          )}
+
           <div>
             <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Gross Net Capital Fee (£ GBP) *</label>
-            <input type="number" name="itemCost" step="0.01" required placeholder="0.00" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
-          </div>
-          
-          <div class="bg-brand-canvas/50 p-3 rounded-xl border border-slate-900 text-[10px] text-slate-400 leading-normal">
-            Submission automatically enforces an immutable **14-Day payment cycle** parameter.
+            <input type="number" name="itemCost" step="0.01" value={editingItem?.amount_due || ""} required placeholder="0.00" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
           </div>
 
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition shadow-lg shadow-brand-primary/20">
-            Generate & Archive Invoice Payload
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono tracking-wide">
+            {editingItem ? "Commit Balance Mod" : "Generate & Archive Invoice"}
           </button>
+          {editingItem && <a href="?" class="block text-center text-[10px] text-slate-500 hover:text-slate-300 font-mono mt-2">&times; Cancel Selection</a>}
         </form>
       </div>
 
-      <div class="lg:col-span-2 space-y-4">
-        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Corporate Transaction Ledger</h3>
-        
-        {invoicesList.length === 0 ? (
-          <div class="bg-brand-surface/40 border border-dashed border-slate-800 rounded-xl p-8 text-center text-slate-500 text-xs">
-            No tracked invoicing files compiled within the live edge transaction databases yet.
-          </div>
-        ) : (
-          <div class="space-y-3">
-            {invoicesList.map((invoice) => (
-              <div class="bg-brand-surface/90 border border-slate-800 rounded-xl p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-brand-primary/40 transition-all duration-300">
-                <div class="space-y-1">
-                  <div class="flex items-center gap-2">
-                    <span class="text-[10px] font-mono font-bold text-brand-accent px-2 py-0.5 rounded bg-brand-canvas border border-slate-800">
-                      {invoice.invoice_number}
-                    </span>
-                    <span class="text-xs font-bold text-white">{invoice.company_name}</span>
-                  </div>
-                  <p class="text-[11px] text-slate-400">
-                    Issued: {new Date(invoice.issued_date).toLocaleDateString('en-GB')} 
-                    <span class="text-slate-600 mx-1.5">|</span> 
-                    Due: <span class="text-slate-200 font-medium">{new Date(invoice.due_date).toLocaleDateString('en-GB')}</span>
-                  </p>
-                </div>
-                
-                <div class="flex items-center gap-4 justify-between sm:justify-end w-full sm:w-auto border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-800">
-                  <span class="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    {invoice.status}
-                  </span>
-                  <div class="text-right font-mono text-sm font-bold text-white">
-                    £{invoice.amount_due.toLocaleString('en-GB', { minimumFractionDigits: 2 })}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+      <div class="lg:col-span-3">
+        <div class="overflow-x-auto border border-slate-800 rounded-2xl bg-brand-surface/30 shadow-2xl">
+          <table class="min-w-full divide-y divide-slate-800 text-left">
+            <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+              <tr>
+                <th class="px-6 py-4">Invoice Reference</th>
+                <th class="px-6 py-4">Corporate Debtor Entity</th>
+                <th class="px-6 py-4">Lifecycle Dates</th>
+                <th class="px-6 py-4">Status Flag</th>
+                <th class="px-6 py-4">Net Amount</th>
+                <th class="px-6 py-4 text-right">Console Controls</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
+              {invoicesList.length === 0 ? (
+                <tr>
+                  <td colspan="6" class="px-6 py-12 text-center text-slate-500 font-mono">No transaction rows found within this scope matrix location.</td>
+                </tr>
+              ) : (
+                invoicesList.map((invoice: any) => (
+                  <tr class="hover:bg-slate-900/40 transition-colors duration-150">
+                    <td class="px-6 py-4 font-mono font-bold text-brand-accent tracking-wide">{invoice.invoice_number}</td>
+                    <td class="px-6 py-4 font-bold text-white">{invoice.company_name}</td>
+                    <td class="px-6 py-4 font-mono text-[11px] text-slate-400">
+                      <div>Issued: {new Date(invoice.issued_date).toLocaleDateString('en-GB')}</div>
+                      <div class="text-slate-500 mt-0.5">Due parameter: {new Date(invoice.due_date).toLocaleDateString('en-GB')}</div>
+                    </td>
+                    <td class="px-6 py-4">
+                      <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border ${invoice.status === 'Paid' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
+                        {invoice.status}
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 font-mono font-bold text-white">£{invoice.amount_due.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+                    <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap font-mono text-[11px]">
+                      {viewMode === 'active' ? (
+                        <>
+                          <a href={`?editId=${invoice.id}`} class="text-brand-accent hover:underline">Edit</a>
+                          <span class="text-slate-800">|</span>
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="archive" />
+                            <input type="hidden" name="itemId" value={invoice.id} />
+                            <button type="submit" class="text-amber-500 hover:underline">Archive</button>
+                          </form>
+                        </>
+                      ) : (
+                        <>
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="restore" />
+                            <input type="hidden" name="itemId" value={invoice.id} />
+                            <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
+                          </form>
+                          <span class="text-slate-800">|</span>
+                          <form method="POST" class="inline" onsubmit="return confirm('CRITICAL RED ALERT: This action executes a final financial audit ledger destruction. Proceed?');">
+                            <input type="hidden" name="actionType" value="purge" />
+                            <input type="hidden" name="itemId" value={invoice.id} />
+                            <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
+                          </form>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div>
-    
-    <footer class="text-[10px] text-slate-500 text-center pt-10 border-t border-slate-900">
-      All accounting ledgers subject to strict UK GDPR audit review protocols governed under the laws of England & Wales. Data Protection Officer: Joshua Stevens.
-    </footer>
   </main>
 </Layout>
