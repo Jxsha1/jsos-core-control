@@ -50,7 +50,8 @@ if (Astro.request.method === "POST") {
       
       if (current && current.gross_value !== calculatedGross) {
         const timestamp = new Date().toISOString().split('T')[0];
-        updatedHistory += `[${timestamp} Altered from £${current.gross_value} to £${calculatedGross}] `;
+        const logEntry = `${timestamp}: Changed from £${current.gross_value.toLocaleString('en-GB', {minimumFractionDigits:2})} to £${calculatedGross.toLocaleString('en-GB', {minimumFractionDigits:2})}`;
+        updatedHistory += (updatedHistory ? "||" : "") + logEntry;
       }
 
       await db.prepare(`
@@ -137,7 +138,7 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
             <div id="salesFlat"><input type="number" id="salesFlatPrice" name="flatFeeAmount" step="0.01" placeholder="Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" /></div>
           </div>
 
-          <div class="border border-slate-800/80 p-2.5 rounded-lg bg-brand-canvas/30 space-y-2">
+          <div class="border border-slate-800 p-2.5 rounded-lg bg-brand-canvas/30 space-y-2">
             <div class="flex justify-between items-center text-[11px]">
               <span class="font-bold text-slate-400 uppercase">Recurring?</span>
               <div class="flex gap-2">
@@ -199,10 +200,7 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                       {isEditing ? (
                         <input type="text" name="title" value={deal.title} form={formId} required class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
                       ) : (
-                        <div>
-                          <div class="font-bold text-white truncate">{deal.title}</div>
-                          {deal.price_history && <div class="text-[9px] text-amber-400 font-mono mt-0.5 truncate" title={deal.price_history}>{deal.price_history}</div>}
-                        </div>
+                        <span class="font-bold text-white truncate block">{deal.title}</span>
                       )}
                     </td>
 
@@ -223,7 +221,7 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                       )}
                     </td>
 
-                    <td class="px-4 py-3 whitespace-nowrap">
+                    <td class="px-4 py-3">
                       {isEditing ? (
                         <select name="stage" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-full">
                           <option value="Discovery" selected={deal.stage === "Discovery"}>Discovery</option>
@@ -235,17 +233,26 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                       ) : deal.stage === 'Contract Lost' ? (
                         <span class="text-rose-500 font-mono font-bold text-[9px] bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 rounded">LOST PIPELINE</span>
                       ) : (
-                        <div class="flex items-center gap-0.5 font-mono text-[8px] font-bold">
-                          {visualProgressionSteps.map((step, idx) => {
-                            const isCurrent = deal.stage === step.key;
-                            const isPast = visualProgressionSteps.findIndex(s => s.key === deal.stage) >= idx;
-                            return (
-                              <>
-                                <span class={`px-1 py-0.5 rounded border ${isCurrent ? 'bg-brand-accent text-brand-canvas border-brand-accent' : isPast ? 'bg-brand-primary/20 text-brand-accent border-brand-primary/20' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>{step.label}</span>
-                                {idx < 3 && <span class="text-slate-700">&rarr;</span>}
-                              </>
-                            );
-                          })}
+                        <div class="space-y-1.5">
+                          <div class="flex items-center gap-0.5 font-mono text-[8px] font-bold">
+                            {visualProgressionSteps.map((step, idx) => {
+                              const isCurrent = deal.stage === step.key;
+                              const isPast = visualProgressionSteps.findIndex(s => s.key === deal.stage) >= idx;
+                              return (
+                                <>
+                                  <span class={`px-1 py-0.5 rounded border ${isCurrent ? 'bg-brand-accent text-brand-canvas border-brand-accent' : isPast ? 'bg-brand-primary/20 text-brand-accent border-brand-primary/20' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>{step.label}</span>
+                                  {idx < 3 && <span class="text-slate-700">&rarr;</span>}
+                                </>
+                              );
+                            })}
+                          </div>
+                          {deal.price_history && (
+                            <div class="text-[9px] font-mono text-slate-500 leading-none space-y-0.5 max-w-xs truncate">
+                              {deal.price_history.split('||').map((log: string) => (
+                                <div class="truncate text-amber-400/90">• {log}</div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </td>
