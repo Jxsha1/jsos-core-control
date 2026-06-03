@@ -55,10 +55,8 @@ if (Astro.request.method === "POST") {
           totalCombinedCost, 'Generated', issuedStr, dueStr, 0
         ).run();
 
-        // Financial coupling alignment loop syncing values directly to active sales projects
         if (opportunityId) {
           const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(opportunityId).first();
-          
           const date = new Date();
           const dd = String(date.getDate()).padStart(2, '0');
           const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -74,11 +72,8 @@ if (Astro.request.method === "POST") {
             SET stage = 'Contract Won', gross_value = ?, price_history = ? 
             WHERE id = ?
           `).bind(totalCombinedCost, updatedHistory, opportunityId).run();
-          
-          feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled. Connected sales project automatically advanced to Contract Won with values matched to this invoice.`;
-        } else {
-          feedbackMessage = `Success: Standalone invoice ${generatedInvoiceNumber} compiled.`;
         }
+        feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled.`;
       }
     }
 
@@ -105,7 +100,6 @@ if (Astro.request.method === "POST") {
         UPDATE invoices SET status = ?, amount_due = ?, sent_date = ?, paid_date = ? WHERE id = ?
       `).bind(nextStatus, cost, sentDate, paidDate, id).run();
       
-      // If the value gets updated inline later this keeps the sales data synchronised
       if (record?.opportunity_id) {
         const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(record.opportunity_id).first();
         const date = new Date();
@@ -158,7 +152,7 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
 ---
 
 <Layout title="Invoice Generator & Vault Ledger | JSOS Core Control">
-  <main class="max-w-7xl mx-auto p-4 md:p-8 space-y-8 w-full box-border overflow-hidden no-print">
+  <main class="max-w-7xl mx-auto p-4 md:p-6 space-y-6 w-full box-border overflow-hidden no-print">
     
     <div class="flex justify-between items-end border-b border-slate-800 pb-4 flex-wrap gap-4">
       <div>
@@ -249,15 +243,15 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
       </div>
 
       <div class="xl:col-span-3 space-y-4 w-full overflow-hidden">
-        <div class="overflow-x-auto border border-slate-800 rounded-xl bg-brand-surface/30 shadow-2xl w-full">
-          <table class="w-full min-w-full divide-y divide-slate-800 text-left table-fixed">
+        <div class="border border-slate-800 rounded-xl bg-brand-surface/30 shadow-2xl w-full overflow-hidden">
+          <table class="w-full min-w-full divide-y divide-slate-800 text-left table-fixed border-collapse">
             <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
               <tr>
-                <th class="px-4 py-3 w-1/5">Reference ID</th>
-                <th class="px-4 py-3 w-1/4">Debtor Entity</th>
-                <th class="px-4 py-3 w-1/5">Fee Configuration</th>
-                <th class="px-4 py-3 w-1/4">Lifecycle Audit Pipeline</th>
-                <th class="px-4 py-3 text-right w-1/6">Controls</th>
+                <th class="px-3 py-3 w-[15%]">Reference ID</th>
+                <th class="px-3 py-3 w-[25%]">Debtor Entity</th>
+                <th class="px-3 py-3 w-[18%]">Fee Configuration</th>
+                <th class="px-3 py-3 w-[27%]">Lifecycle Audit Pipeline</th>
+                <th class="px-3 py-3 text-right w-[15%]">Controls</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
@@ -274,47 +268,49 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                       </form>
                     )}
 
-                    <td class="px-4 py-3 font-mono font-bold text-brand-accent tracking-wide truncate">{invoice.invoice_number}</td>
+                    <td class="px-3 py-3 font-mono font-bold text-brand-accent tracking-tight whitespace-normal break-all">
+                      {invoice.invoice_number}
+                    </td>
                     
-                    <td class="px-4 py-3 truncate">
-                      <div class="font-bold text-white truncate">{invoice.company_name}</div>
-                      <div class="text-[10px] text-slate-400 truncate">{invoice.item_description}</div>
-                      {invoice.project_title && <div class="text-[9px] text-brand-accent/80 font-mono mt-0.5 truncate">Project: {invoice.project_title}</div>}
+                    <td class="px-3 py-3 whitespace-normal break-words">
+                      <div class="font-bold text-white break-words">{invoice.company_name}</div>
+                      <div class="text-[10px] text-slate-400 break-words mt-0.5">{invoice.item_description}</div>
+                      {invoice.project_title && <div class="text-[9px] text-brand-accent/80 font-mono mt-0.5 break-words">Project: {invoice.project_title}</div>}
                     </td>
 
-                    <td class="px-4 py-3 font-mono text-[11px] truncate">
+                    <td class="px-3 py-3 font-mono text-[11px] whitespace-normal break-words">
                       {isEditing ? (
-                        <input type="number" name="amountDue" step="0.01" value={invoice.amount_due} form={formId} required class="w-20 bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white" />
+                        <input type="number" name="amountDue" step="0.01" value={invoice.amount_due} form={formId} required class="w-full max-w-[90px] bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white" />
                       ) : (
-                        <div>
+                        <div class="space-y-0.5">
                           <div class="font-bold text-white">£{invoice.amount_due.toLocaleString('en-GB', {minimumFractionDigits:2})}</div>
-                          <div class="text-[9px] text-slate-500">F: £{invoice.flat_fee_amount} | R: £{invoice.recurring_amount}</div>
+                          <div class="text-[9px] text-slate-500 break-words">F: £{invoice.flat_fee_amount} | R: £{invoice.recurring_amount}</div>
                         </div>
                       )}
                     </td>
 
-                    <td class="px-4 py-3 whitespace-nowrap">
+                    <td class="px-3 py-3 whitespace-normal break-words">
                       {isEditing ? (
-                        <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white w-full">
+                        <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white w-full max-w-[120px]">
                           <option value="Generated" selected={invoice.status === 'Generated'}>Generated</option>
                           <option value="Sent" selected={invoice.status === 'Sent'}>Sent</option>
                           <option value="Paid" selected={invoice.status === 'Paid'}>Paid</option>
                         </select>
                       ) : (
                         <div class="space-y-1">
-                          <div class="flex items-center gap-0.5 font-mono text-[8px] font-bold">
+                          <div class="flex flex-wrap items-center gap-0.5 font-mono text-[8px] font-bold whitespace-normal">
                             {visualProgressionSteps.map((step, idx) => {
                               const isCurrent = invoice.status === step.key;
                               const isPast = visualProgressionSteps.findIndex(s => s.key === invoice.status) >= idx;
                               return (
                                 <>
-                                  <span class={`px-1 py-0.5 rounded border ${isCurrent ? 'bg-brand-primary text-white border-brand-primary' : 'isPast' ? 'bg-brand-primary/10 text-brand-accent border-brand-primary/20' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>{step.label}</span>
+                                  <span class={`px-1 py-0.5 rounded border transition-colors ${isCurrent ? 'bg-brand-primary text-white border-brand-primary' : isPast ? 'bg-brand-primary/10 text-brand-accent border-brand-primary/20' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>{step.label}</span>
                                   {idx < 2 && <span class="text-slate-700">&rarr;</span>}
                                 </>
                               );
                             })}
                           </div>
-                          <div class="text-[10px] font-mono text-slate-500 leading-none space-y-0.5">
+                          <div class="text-[9px] font-mono text-slate-500 leading-none space-y-0.5 whitespace-normal break-words">
                             {invoice.sent_date && <div>• Sent: {invoice.sent_date}</div>}
                             {invoice.paid_date && <div>• Paid: <span class="text-emerald-400 font-bold">{invoice.paid_date}</span></div>}
                           </div>
@@ -322,16 +318,16 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                       )}
                     </td>
 
-                    <td class="px-4 py-3 text-right whitespace-nowrap font-mono text-[11px]">
+                    <td class="px-3 py-3 text-right font-mono text-[11px] whitespace-normal break-words">
                       {isEditing ? (
-                        <div class="space-x-1">
+                        <div class="flex justify-end gap-1.5">
                           <button type="submit" form={formId} class="text-emerald-400 font-bold hover:underline">Save</button>
                           <span class="text-slate-800">|</span>
                           <a href="?" class="text-slate-500 hover:underline">Cancel</a>
                         </div>
                       ) : viewMode === 'active' ? (
-                        <div class="space-x-1">
-                          <button onclick={`window.print_target_statement('${invoice.invoice_number}', '${invoice.company_name}', '${invoice.item_description}', '${invoice.amount_due}')`} class="text-emerald-400 font-bold hover:underline">Export Quote</button>
+                        <div class="flex flex-wrap justify-end gap-1.5">
+                          <button onclick={`window.print_target_statement('${invoice.invoice_number}', '${invoice.company_name}', '${invoice.item_description}', '${invoice.amount_due}')`} class="text-emerald-400 font-bold hover:underline">Export</button>
                           <span class="text-slate-800">|</span>
                           <a href={`?editId=${invoice.id}`} class="text-brand-accent hover:underline">Edit</a>
                           <span class="text-slate-800">|</span>
@@ -341,7 +337,7 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                           </form>
                         </div>
                       ) : (
-                        <div class="space-x-1">
+                        <div class="flex justify-end gap-1.5">
                           <form method="POST" class="inline">
                             <input type="hidden" name="actionType" value="restore" /><input type="hidden" name="itemId" value={invoice.id} />
                             <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
