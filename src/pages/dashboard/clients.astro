@@ -4,9 +4,8 @@ import Layout from '../../layouts/Layout.astro';
 const db = Astro.locals.runtime.env.DB;
 let feedbackMessage = "";
 
-// Read current interactive UI state filters from browser URL context parameters
 const activeFilter = Astro.url.searchParams.get('statusFilter') || 'All';
-const viewMode = Astro.url.searchParams.get('view') || 'active'; // 'active' or 'archived'
+const viewMode = Astro.url.searchParams.get('view') || 'active';
 const editTargetId = Astro.url.searchParams.get('editId') || null;
 
 if (Astro.request.method === "POST") {
@@ -41,38 +40,31 @@ if (Astro.request.method === "POST") {
       await db.prepare(`
         UPDATE clients SET company_name = ?, contact_name = ?, email = ?, phone = ?, infrastructure_notes = ?, status = ? WHERE id = ?
       `).bind(company, contact, email, phone, notes, status, id).run();
-      feedbackMessage = "Success: Account record updated successfully.";
+      feedbackMessage = "Success: Changes committed inline.";
     }
 
     if (action === "archive") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE clients SET is_archived = 1 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Account record moved to archive storage.";
+      feedbackMessage = "Success: Record shifted to archive container.";
     }
 
     if (action === "restore") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE clients SET is_archived = 0 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Account record restored to active view.";
+      feedbackMessage = "Success: Record returned to active view.";
     }
 
     if (action === "purge") {
       const id = formData.get("itemId");
       await db.prepare("DELETE FROM clients WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Account record permanently destroyed from database hardware.";
+      feedbackMessage = "Success: Data node completely destroyed from edge hardware.";
     }
   } catch (err: any) {
     feedbackMessage = `Operational Alert: ${err.message}`;
   }
 }
 
-// Fetch single client details if edit target context hook is active
-let editingItem: any = null;
-if (editTargetId) {
-  editingItem = await db.prepare("SELECT * FROM clients WHERE id = ?").bind(editTargetId).first();
-}
-
-// Compile SQL query dynamically based on active filter criteria parameters
 let baseQuery = "SELECT * FROM clients WHERE is_archived = ?";
 const queryParams: any[] = [viewMode === 'archived' ? 1 : 0];
 
@@ -93,71 +85,66 @@ const clientsList = (await db.prepare(baseQuery).bind(...queryParams).all()).res
         <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Enterprise Workspace</span>
         <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">CRM Client Directory</h1>
       </div>
-      <div class="flex gap-2">
-        <a href="?view=active" class={`px-4 py-2 rounded-xl text-xs font-bold border transition ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Active Records</a>
-        <a href="?view=archived" class={`px-4 py-2 rounded-xl text-xs font-bold border transition ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archive Repository</a>
+      <div class="flex gap-2 font-mono text-xs">
+        <a href="?view=active" class={`px-4 py-2 rounded-xl border font-bold transition ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Active Scopes</a>
+        <a href="?view=archived" class={`px-4 py-2 rounded-xl border font-bold transition ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived Vault</a>
       </div>
     </div>
 
     {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
 
-    <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+    <div class="grid grid-cols-1 xl:grid-cols-4 gap-8">
       
       <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">{editingItem ? "Modify Client Data Node" : "Register Enterprise Account"}</h3>
+        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Onboard Corporate Profile</h3>
         <form method="POST" class="space-y-4">
-          <input type="hidden" name="actionType" value={editingItem ? "update" : "create"} />
-          {editingItem && <input type="hidden" name="itemId" value={editingItem.id} />}
-          
+          <input type="hidden" name="actionType" value="create" />
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Company Entity Name *</label>
-            <input type="text" name="companyName" value={editingItem?.company_name || ""} required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Company Name *</label>
+            <input type="text" name="companyName" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Primary Contact Name *</label>
-            <input type="text" name="contactName" value={editingItem?.contact_name || ""} required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Contact Person *</label>
+            <input type="text" name="contactName" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Business Email Address *</label>
-            <input type="email" name="email" value={editingItem?.email || ""} required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Business Email *</label>
+            <input type="email" name="email" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Direct Phone Link</label>
-            <input type="text" name="phone" value={editingItem?.phone || ""} class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Phone Link</label>
+            <input type="text" name="phone" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary" />
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Operational Lifecycle Status *</label>
-            <select name="status" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
-              <option value="New Prospect" selected={editingItem?.status === "New Prospect"}>New Prospect</option>
-              <option value="Strategic Negotiation" selected={editingItem?.status === "Strategic Negotiation"}>Strategic Negotiation</option>
-              <option value="Active Managed Client" selected={editingItem?.status === "Active Managed Client"}>Active Managed Client</option>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Lifecycle Classification *</label>
+            <select name="status" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary">
+              <option value="New Prospect">New Prospect</option>
+              <option value="Strategic Negotiation">Strategic Negotiation</option>
+              <option value="Active Managed Client">Active Managed Client</option>
             </select>
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Infrastructure Profile Notes</label>
-            <textarea name="notes" rows="3" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary resize-none">{editingItem?.infrastructure_notes || ""}</textarea>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Technical Notes</label>
+            <textarea name="notes" rows="3" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-brand-primary resize-none"></textarea>
           </div>
           <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono tracking-wide">
-            {editingItem ? "Commit Modifications" : "Map Client Profile"}
+            Execute Client Entry
           </button>
-          {editingItem && <a href="?" class="block text-center text-[10px] text-slate-500 hover:text-slate-300 font-mono mt-2">&times; Cancel Selection</a>}
         </form>
       </div>
 
-      <div class="lg:col-span-3 space-y-4">
-        
+      <div class="xl:col-span-3 space-y-4">
         <div class="flex items-center justify-between bg-brand-surface/40 border border-slate-800 px-4 py-3 rounded-xl">
           <form method="GET" class="flex items-center gap-3">
             <input type="hidden" name="view" value={viewMode} />
-            <label class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">Filter Status Matrix:</label>
+            <label class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">Dynamic Categorisation Filter:</label>
             <select name="statusFilter" onchange="this.form.submit()" class="bg-brand-canvas border border-slate-800 rounded-lg text-xs text-slate-300 px-3 py-1.5 focus:outline-none focus:border-brand-primary">
-              <option value="All" selected={activeFilter === 'All'}>Show All Classes</option>
+              <option value="All" selected={activeFilter === 'All'}>All Classifications</option>
               <option value="New Prospect" selected={activeFilter === 'New Prospect'}>New Prospect</option>
               <option value="Strategic Negotiation" selected={activeFilter === 'Strategic Negotiation'}>Strategic Negotiation</option>
               <option value="Active Managed Client" selected={activeFilter === 'Active Managed Client'}>Active Managed Client</option>
             </select>
           </form>
-          <span class="text-[10px] font-mono text-slate-500">Records Indexed: {clientsList.length}</span>
         </div>
 
         <div class="overflow-x-auto border border-slate-800 rounded-2xl bg-brand-surface/30 shadow-2xl">
@@ -167,36 +154,84 @@ const clientsList = (await db.prepare(baseQuery).bind(...queryParams).all()).res
                 <th class="px-6 py-4">Company Entity</th>
                 <th class="px-6 py-4">Primary Contact</th>
                 <th class="px-6 py-4">Operational Status</th>
-                <th class="px-6 py-4">Communication Links</th>
+                <th class="px-6 py-4">Communication Parameters</th>
                 <th class="px-6 py-4 text-right">Console Controls</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
-              {clientsList.length === 0 ? (
-                <tr>
-                  <td colspan="5" class="px-6 py-12 text-center text-slate-500 font-mono">No matching account data packets found in this scope location.</td>
-                </tr>
-              ) : (
-                clientsList.map((client: any) => (
+              {clientsList.map((client: any) => {
+                const isEditing = editTargetId === client.id;
+                const formId = `form-client-${client.id}`;
+
+                return (
                   <tr class="hover:bg-slate-900/40 transition-colors duration-150">
+                    {isEditing && (
+                      <form method="POST" id={formId}>
+                        <input type="hidden" name="actionType" value="update" />
+                        <input type="hidden" name="itemId" value={client.id} />
+                      </form>
+                    )}
+
                     <td class="px-6 py-4">
-                      <div class="font-bold text-white">{client.company_name}</div>
-                      <div class="text-[10px] text-slate-500 max-w-xs truncate font-mono mt-0.5" title={client.infrastructure_notes}>{client.infrastructure_notes || "No profile modifications appended."}</div>
+                      {isEditing ? (
+                        <div class="space-y-1">
+                          <input type="text" name="companyName" value={client.company_name} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-brand-primary" />
+                          <input type="text" name="notes" value={client.infrastructure_notes} form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-400 w-full focus:outline-none" />
+                        </div>
+                      ) : (
+                        <div>
+                          <div class="font-bold text-white">{client.company_name}</div>
+                          <div class="text-[10px] text-slate-500 font-mono truncate max-w-xs mt-0.5">{client.infrastructure_notes || "No historical logs appended."}</div>
+                        </div>
+                      )}
                     </td>
-                    <td class="px-6 py-4 font-medium">{client.contact_name}</td>
+
                     <td class="px-6 py-4">
-                      <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border ${client.status === 'Active Managed Client' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
-                        {client.status}
-                      </span>
+                      {isEditing ? (
+                        <input type="text" name="contactName" value={client.contact_name} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white focus:outline-none w-28" />
+                      ) : (
+                        <span class="font-medium">{client.contact_name}</span>
+                      )}
                     </td>
-                    <td class="px-6 py-4 font-mono text-slate-400 text-[11px]">
-                      <div>{client.email}</div>
-                      <div class="text-slate-600 mt-0.5">{client.phone || "No Link Available"}</div>
+
+                    <td class="px-6 py-4">
+                      {isEditing ? (
+                        <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white focus:outline-none">
+                          <option value="New Prospect" selected={client.status === "New Prospect"}>New Prospect</option>
+                          <option value="Strategic Negotiation" selected={client.status === "Strategic Negotiation"}>Strategic Negotiation</option>
+                          <option value="Active Managed Client" selected={client.status === "Active Managed Client"}>Active Managed Client</option>
+                        </select>
+                      ) : (
+                        <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border ${client.status === 'Active Managed Client' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
+                          {client.status}
+                        </span>
+                      )}
                     </td>
+
+                    <td class="px-6 py-4 font-mono text-[11px]">
+                      {isEditing ? (
+                        <div class="space-y-1">
+                          <input type="email" name="email" value={client.email} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-white focus:outline-none" />
+                          <input type="text" name="phone" value={client.phone || ""} form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-white focus:outline-none" />
+                        </div>
+                      ) : (
+                        <div>
+                          <div class="text-slate-300">{client.email}</div>
+                          <div class="text-slate-500 mt-0.5">{client.phone || "No Link Line"}</div>
+                        </div>
+                      )}
+                    </td>
+
                     <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap font-mono text-[11px]">
-                      {viewMode === 'active' ? (
+                      {isEditing ? (
                         <>
-                          <a href={`?editId=${client.id}&statusFilter=${activeFilter}`} class="text-brand-accent hover:underline">Edit</a>
+                          <button type="submit" form={formId} class="text-emerald-400 hover:underline font-bold">Save</button>
+                          <span class="text-slate-800">|</span>
+                          <a href={`?statusFilter=${activeFilter}&view=${viewMode}`} class="text-slate-500 hover:underline">Cancel</a>
+                        </>
+                      ) : viewMode === 'active' ? (
+                        <>
+                          <a href={`?editId=${client.id}&statusFilter=${activeFilter}&view=${viewMode}`} class="text-brand-accent hover:underline">Edit</a>
                           <span class="text-slate-800">|</span>
                           <form method="POST" class="inline">
                             <input type="hidden" name="actionType" value="archive" />
@@ -212,7 +247,7 @@ const clientsList = (await db.prepare(baseQuery).bind(...queryParams).all()).res
                             <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
                           </form>
                           <span class="text-slate-800">|</span>
-                          <form method="POST" class="inline" onsubmit="return confirm('CRITICAL RED ALERT: This operation executes a total permanent hardware deletion. Proceed?');">
+                          <form method="POST" class="inline" onsubmit="return confirm('PERMANENT DESTRUCTION AUDIT WARNING: Wipe item completely?');">
                             <input type="hidden" name="actionType" value="purge" />
                             <input type="hidden" name="itemId" value={client.id} />
                             <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
@@ -221,8 +256,8 @@ const clientsList = (await db.prepare(baseQuery).bind(...queryParams).all()).res
                       )}
                     </td>
                   </tr>
-                ))
-              )}
+                );
+              })}
             </tbody>
           </table>
         </div>
