@@ -1,42 +1,26 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "jsos-core-control",
-  "main": "./dist/_worker.js",
-  "compatibility_date": "2026-06-02",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
-  "assets": {
-    "directory": "./dist",
-    "binding": "ASSETS"
-  },
-  "observability": {
-    "enabled": true
-  },
-  // Relational SQL Configuration Binding Map
-  "d1_databases": [
-    {
-      "binding": "DB", 
-      "database_name": "jsos-core-db",
-      "database_id": "bb59e764-fe2e-44f5-887a-da823999fc13" 
-    }
-  ],
-  // Micro-Caching Identity Layer Binding Map
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-06-03",
   "kv_namespaces": [
     {
       "binding": "SESSION",
-      "id": "bb7ca369f0064da880b8de155c0be4f5"
+      "id": "ENTER_YOUR_ACTUAL_KV_NAMESPACE_ID_HERE"
     }
   ],
-  // Asset Storage Archive Binding Map
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jsos-core-db",
+      "database_id": "ENTER_YOUR_ACTUAL_D1_DATABASE_ID_HERE"
+    }
+  ],
   "r2_buckets": [
     {
       "binding": "INVOICE_VAULT",
       "bucket_name": "jsos-invoice-vault"
     }
-  ]
-}
-{
+  ],
   "email_sending": [
     {
       "binding": "EMAIL"
