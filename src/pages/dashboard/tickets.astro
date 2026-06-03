@@ -29,7 +29,7 @@ if (Astro.request.method === "POST") {
         INSERT INTO tickets (id, client_id, title, description, priority, status, sla_deadline, is_archived)
         VALUES (?, ?, ?, ?, ?, 'Open', ?, 0)
       `).bind(crypto.randomUUID(), clientId, title, description, priority, deadline).run();
-      feedbackMessage = "Success: Incident routed to support queue grid.";
+      feedbackMessage = "Success: Incident routed to support queue.";
     }
 
     if (action === "update") {
@@ -43,12 +43,13 @@ if (Astro.request.method === "POST") {
         UPDATE tickets SET title = ?, description = ?, priority = ?, status = ? WHERE id = ?
       `).bind(title, description, priority, status, id).run();
       feedbackMessage = "Success: Incident modifications committed inline.";
+      return Astro.redirect(`/dashboard/tickets?tab=${activeTab}`);
     }
 
     if (action === "complete") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE tickets SET status = 'Completed' WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Support engineering incident shifted to Completed status tab.";
+      feedbackMessage = "Success: Incident shifted to Completed status tab.";
     }
 
     if (action === "archive") {
@@ -96,69 +97,68 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
 ---
 
 <Layout title="Professional Services Automation | JSOS Core Control">
-  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
+  <main class="max-w-7xl mx-auto p-4 md:p-8 space-y-6 w-full box-border overflow-hidden">
     
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-800 pb-6 gap-4">
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-800 pb-4 gap-4">
       <div>
         <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Service Architecture Matrix</span>
-        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">PSA Support Ticketing</h1>
+        <h1 class="text-2xl font-extrabold text-white tracking-tight mt-1">PSA Support Ticketing</h1>
       </div>
-      
-      <div class="flex border border-slate-800 bg-brand-surface/40 p-1.5 rounded-xl text-xs font-mono font-bold">
-        <a href="?tab=active" class={`px-4 py-2 rounded-lg transition ${activeTab === 'active' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Active Queue</a>
-        <a href="?tab=completed" class={`px-4 py-2 rounded-lg transition ${activeTab === 'completed' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Completed Tasks</a>
-        <a href="?tab=archived" class={`px-4 py-2 rounded-lg transition ${activeTab === 'archived' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Archive</a>
+      <div class="flex border border-slate-800 bg-brand-surface/40 p-1 rounded-xl text-xs font-mono font-bold">
+        <a href="?tab=active" class={`px-3 py-1.5 rounded-lg transition ${activeTab === 'active' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Active</a>
+        <a href="?tab=completed" class={`px-3 py-1.5 rounded-lg transition ${activeTab === 'completed' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Completed</a>
+        <a href="?tab=archived" class={`px-3 py-1.5 rounded-lg transition ${activeTab === 'archived' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Archive</a>
       </div>
     </div>
 
     {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
 
-    <div class="grid grid-cols-1 xl:grid-cols-4 gap-8">
+    <div class="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start w-full">
       
-      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Open Ticket Entry</h3>
-        <form method="POST" class="space-y-4">
+      <div class="bg-brand-surface/80 border border-slate-800 rounded-xl p-5 shadow-xl h-fit w-full box-border">
+        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Open Ticket Entry</h3>
+        <form method="POST" class="space-y-3">
           <input type="hidden" name="actionType" value="create" />
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Debtor Target Corporate Client *</label>
-            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none">
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Client *</label>
+            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none">
               <option value="">Select Account</option>
               {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
             </select>
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Incident Summary Title *</label>
-            <input type="text" name="title" required placeholder="e.g. Core Network Down" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white" />
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Summary Title *</label>
+            <input type="text" name="title" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white" />
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Fault Technical Breakdown *</label>
-            <textarea name="description" required rows="4" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white resize-none"></textarea>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Technical Breakdown *</label>
+            <textarea name="description" required rows="4" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-none"></textarea>
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">SLA Response Criticality Priority *</label>
-            <select name="priority" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white">
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">SLA Priority Matrix *</label>
+            <select name="priority" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white">
               <option value="Low">Low Priority</option>
               <option value="Medium" selected>Medium Priority</option>
               <option value="High">High Priority</option>
-              <option value="Critical">Critical Priority (Outage Event)</option>
+              <option value="Critical">Critical Priority</option>
             </select>
           </div>
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono">
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-2 rounded-lg transition font-mono">
             Dispatch Queue Incident
           </button>
         </form>
       </div>
 
-      <div class="xl:col-span-3">
-        <div class="overflow-x-auto border border-slate-800 rounded-2xl bg-brand-surface/30 shadow-2xl">
-          <table class="min-w-full divide-y divide-slate-800 text-left">
+      <div class="xl:col-span-3 space-y-4 w-full overflow-hidden">
+        <div class="border border-slate-800 rounded-xl bg-brand-surface/30 shadow-2xl w-full overflow-hidden">
+          <table class="w-full min-w-full divide-y divide-slate-800 text-left table-fixed border-collapse">
             <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
               <tr>
-                <th class="px-6 py-4">Incident Parameters</th>
-                <th class="px-6 py-4">Target Account</th>
-                <th class="px-6 py-4">Severity Tier</th>
-                <th class="px-6 py-4">SLA Resolution Window Deadline</th>
-                <th class="px-6 py-4 text-right">Console Controls</th>
+                <th class="px-4 py-3 w-1/4">Incident Parameters</th>
+                <th class="px-4 py-3 w-1/6">Target Account</th>
+                <th class="px-4 py-3 w-1/5">Severity Tier</th>
+                <th class="px-4 py-3 w-1/4">SLA Resolution Window</th>
+                <th class="px-4 py-3 text-right w-1/6">Controls</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
@@ -167,7 +167,7 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
                 const formId = `form-ticket-${ticket.id}`;
 
                 return (
-                  <tr class="hover:bg-slate-900/40 transition-colors duration-150">
+                  <tr class="hover:bg-slate-900/30 transition">
                     {isEditing && (
                       <form method="POST" id={formId}>
                         <input type="hidden" name="actionType" value="update" />
@@ -175,98 +175,91 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
                       </form>
                     )}
 
-                    <td class="px-6 py-4">
+                    <td class="px-4 py-3 whitespace-normal break-words">
                       {isEditing ? (
                         <div class="space-y-1">
-                          <input type="text" name="title" value={ticket.title} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
+                          <input type="text" name="title" value={ticket.title} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-full" />
                           <textarea name="description" form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-white w-full h-12 resize-none">{ticket.description}</textarea>
                         </div>
                       ) : (
                         <div>
-                          <div class="font-bold text-white">{ticket.title}</div>
-                          <div class="text-[11px] text-slate-400 mt-0.5">{ticket.description}</div>
+                          <div class="font-bold text-white break-words">{ticket.title}</div>
+                          <div class="text-[11px] text-slate-400 mt-0.5 break-words">{ticket.description}</div>
                         </div>
                       )}
                     </td>
 
-                    <td class="px-6 py-4 font-semibold text-slate-300">{ticket.company_name}</td>
+                    <td class="px-4 py-3 font-semibold text-slate-300 whitespace-normal break-words">{ticket.company_name}</td>
 
-                    <td class="px-6 py-4">
+                    <td class="px-4 py-3 whitespace-normal break-words">
                       {isEditing ? (
-                        <div class="space-y-1">
-                          <select name="priority" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white">
+                        <div class="space-y-1 w-full">
+                          <select name="priority" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white w-full">
                             <option value="Low" selected={ticket.priority === 'Low'}>Low</option>
                             <option value="Medium" selected={ticket.priority === 'Medium'}>Medium</option>
                             <option value="High" selected={ticket.priority === 'High'}>High</option>
                             <option value="Critical" selected={ticket.priority === 'Critical'}>Critical</option>
                           </select>
-                          <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white block">
+                          <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white w-full">
                             <option value="Open" selected={ticket.status === 'Open'}>Open</option>
                             <option value="In_Progress" selected={ticket.status === 'In_Progress'}>In Progress</option>
                             <option value="Completed" selected={ticket.status === 'Completed'}>Completed</option>
                           </select>
                         </div>
                       ) : (
-                        <div class="space-y-1">
-                          <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border block w-fit ${ticket.priority === 'Critical' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400 animate-pulse' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
+                        <div class="space-y-1 break-words">
+                          <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border inline-block ${ticket.priority === 'Critical' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400 animate-pulse' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
                             {ticket.priority}
                           </span>
-                          <span class="text-[10px] text-slate-500 font-mono block">Status: {ticket.status}</span>
+                          <span class="text-[10px] text-slate-500 font-mono block break-words">Status: {ticket.status}</span>
                         </div>
                       )}
                     </td>
 
-                    <td class="px-6 py-4 font-mono text-[11px] text-slate-400">
+                    <td class="px-4 py-3 font-mono text-[11px] text-slate-400 whitespace-normal break-words">
                       {ticket.status === 'Completed' ? (
-                        <span class="text-emerald-400 font-bold">Resolved Task</span>
+                        <span class="text-emerald-400 font-bold break-words">Resolved Task</span>
                       ) : (
-                        <span>{new Date(ticket.sla_deadline).toLocaleString('en-GB')}</span>
+                        <span class="break-all">{new Date(ticket.sla_deadline).toLocaleString('en-GB')}</span>
                       )}
                     </td>
 
-                    <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap font-mono text-[11px]">
+                    <td class="px-4 py-3 text-right font-mono text-[11px] whitespace-normal break-words">
                       {isEditing ? (
-                        <>
-                          <button type="submit" form={formId} class="text-emerald-400 hover:underline font-bold">Save</button>
-                          <span class="text-slate-800">|</span>
+                        <div class="flex flex-col items-end gap-1">
+                          <button type="submit" form={formId} class="text-emerald-400 font-bold hover:underline">Save</button>
                           <a href={`?tab=${activeTab}`} class="text-slate-500 hover:underline">Cancel</a>
-                        </>
+                        </div>
                       ) : activeTab === 'active' ? (
-                        <>
+                        <div class="flex flex-col items-end gap-1">
                           <form method="POST" class="inline">
-                            <input type="hidden" name="actionType" value="complete" />
-                            <input type="hidden" name="itemId" value={ticket.id} />
+                            <input type="hidden" name="actionType" value="complete" /><input type="hidden" name="itemId" value={ticket.id} />
                             <button type="submit" class="text-emerald-400 hover:underline font-bold">Complete</button>
                           </form>
-                          <span class="text-slate-800">|</span>
                           <a href={`?tab=${activeTab}&editId=${ticket.id}`} class="text-brand-accent hover:underline">Edit</a>
-                          <span class="text-slate-800">|</span>
                           <form method="POST" class="inline">
-                            <input type="hidden" name="actionType" value="archive" />
-                            <input type="hidden" name="itemId" value={ticket.id} />
+                            <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={ticket.id} />
                             <button type="submit" class="text-amber-500 hover:underline">Archive</button>
                           </form>
-                        </>
+                        </div>
                       ) : activeTab === 'completed' ? (
-                        <form method="POST" class="inline">
-                          <input type="hidden" name="actionType" value="archive" />
-                          <input type="hidden" name="itemId" value={ticket.id} />
-                          <button type="submit" class="text-amber-500 hover:underline">Archive</button>
-                        </form>
-                      ) : (
-                        <>
+                        <div class="flex flex-col items-end gap-1">
                           <form method="POST" class="inline">
-                            <input type="hidden" name="actionType" value="restore" />
-                            <input type="hidden" name="itemId" value={ticket.id} />
+                            <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={ticket.id} />
+                            <button type="submit" class="text-amber-500 hover:underline">Archive</button>
+                          </form>
+                        </div>
+                      ) : (
+                        <div class="flex flex-col items-end gap-1">
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="restore" /><input type="hidden" name="itemId" value={ticket.id} />
                             <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
                           </form>
-                          <span class="text-slate-800">|</span>
-                          <form method="POST" class="inline" onsubmit="return confirm('PERMANENT AUDIT DISPATCH PURGE WARNING: Delete incident permanent row?');">
-                            <input type="hidden" name="actionType" value="purge" />
-                            <input type="hidden" name="itemId" value={ticket.id} />
-                            <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
+                          <form method="POST" class="inline" onsubmit="return confirm('Purge row?');">
+                            <input type="hidden" name="actionType" value="purge" /><input type="hidden" name="itemId" value={ticket.id} />
+                            <button type="submit" class="text-rose-500 hover:underline font-bold">Purge</button>
                           </form>
-                        </>
+                        </div>
                       )}
                     </td>
                   </tr>
