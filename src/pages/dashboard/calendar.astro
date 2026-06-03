@@ -2,129 +2,312 @@
 import Layout from '../../layouts/Layout.astro';
 
 const db = Astro.locals.runtime.env.DB;
-let bookedMeetings: any[] = [];
-let calendarFeedback = "";
+let feedbackMessage = "";
 
+// Default timeline parameters initialized to current date context
+const dateNow = new Date();
+let currentYear = parseInt(Astro.url.searchParams.get('year') || "2026");
+let currentMonth = parseInt(Astro.url.searchParams.get('month') || "6"); // June default parameter
+
+// Process incoming calendar blockouts or manual booking insertions natively at the edge
 if (Astro.request.method === "POST") {
   try {
     const formData = await Astro.request.formData();
-    const dateStr = formData.get("blockDate"); 
-    const timeStr = formData.get("blockTime"); 
-    const description = formData.get("reason") || "Administrative Focus Period";
+    const action = formData.get("actionType");
 
-    if (dateStr && timeStr) {
-      const startIso = new Date(`${dateStr}T${timeStr}:00Z`).toISOString();
-      const endIso = new Date(new Date(startIso).getTime() + 30 * 60 * 1000).toISOString();
+    if (action === "create_block") {
+      const dateStr = formData.get("targetDate");
+      const timeStr = formData.get("targetTime");
+      const subject = formData.get("subject") || "Administrative Focus Lockout";
+      const blockStatus = formData.get("blockStatus") || "Blocked";
 
-      await db.prepare(`
-        INSERT INTO bookings (id, client_name, client_email, meeting_subject, start_time, end_time, status, uk_gdpr_consent_logged)
-        VALUES (?, 'INTERNAL EXCLUSION', 'ops@jsos.uk', ?, ?, ?, 'Blocked', 0)
-      `).bind(crypto.randomUUID(), description.toString(), startIso, endIso).run();
+      if (dateStr && timeStr) {
+        const startIso = new Date(`${dateStr}T${timeStr}:00Z`).toISOString();
+        const endIso = new Date(new Date(startIso).getTime() + 30 * 60 * 1000).toISOString();
 
-      calendarFeedback = "Success: Operational time frame locked out. Public booking link synchronized.";
+        await db.prepare(`
+          INSERT INTO bookings (id, client_name, client_email, meeting_subject, start_time, end_time, status, is_archived)
+          VALUES (?, 'INTERNAL SYSTEM', 'ops@jsos.uk', ?, ?, ?, ?, 0)
+        `).bind(crypto.randomUUID(), subject, startIso, endIso, blockStatus).run();
+        
+        feedbackMessage = "Success: Operational matrix update committed live.";
+      }
+    }
+
+    if (action === "update_status") {
+      const id = formData.get("itemId");
+      const nextStatus = formData.get("status");
+      await db.prepare("UPDATE bookings SET status = ? WHERE id = ?").bind(nextStatus, id).run();
+      feedbackMessage = "Success: Allocation state altered successfully.";
+    }
+
+    if (action === "archive") {
+      const id = formData.get("itemId");
+      await db.prepare("UPDATE bookings SET is_archived = 1 WHERE id = ?").bind(id).run();
+    }
+
+    if (action === "purge") {
+      const id = formData.get("itemId");
+      await db.prepare("DELETE FROM bookings WHERE id = ?").bind(id).run();
     }
   } catch (err: any) {
-    calendarFeedback = `Scheduling Collision: ${err.message}`;
+    feedbackMessage = `Scheduling Collision: ${err.message}`;
   }
 }
 
+// Read persistence rows from the database edge layer
+let bookedMeetings = [];
 try {
-  bookedMeetings = (await db.prepare("SELECT * FROM bookings WHERE status IN ('Scheduled', 'Blocked') ORDER BY start_time ASC").all()).results || [];
+  bookedMeetings = (await db.prepare("SELECT * FROM bookings WHERE is_archived = 0 ORDER BY start_time ASC").all()).results || [];
 } catch (e) {
   bookedMeetings = [];
 }
 
-// Generate high-fidelity sample visual 31-day calendar node framework maps
-const currentMonthDays = Array.from({ length: 31 }, (_, i) => i + 1);
+// Compute calendar grid variables based on requested year and month lookups
+const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+const firstDayIndex = new Date(currentYear, currentMonth - 1, 1).getDay();
+const dayOffset = firstDayIndex === 0 ? 6 : firstDayIndex - 1; // Shifts grid array mapping to start cleanly on Monday
+
+const calendarGridDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+const paddingCells = Array.from({ length: dayOffset }, (_, i) => i);
+
+const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const currentMonthLabel = monthNames[currentMonth - 1];
+
+// Bounds checking configuration constraining navigation between Jan 2026 and June 2027
+const isPastLimit = currentYear === 2026 && currentMonth === 1;
+const isFutureLimit = currentYear === 2027 && currentMonth === 6;
+
+// Determine chronological step points for previous month actions
+let prevMonth = currentMonth - 1;
+let prevYear = currentYear;
+if (prevMonth < 1) { prevMonth = 12; prevYear -= 1; }
+
+// Determine chronological step points for next month actions
+let nextMonth = currentMonth + 1;
+let nextYear = currentYear;
+if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
 ---
 
 <Layout title="Operational Master Calendar | JSOS Core Control">
-  <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
+  <main class="max-w-7xl mx-auto p-4 md:p-6 space-y-6 w-full box-border overflow-hidden">
     
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-800 pb-6 gap-4">
+    <div class="flex justify-between items-center border-b border-slate-800 pb-4 flex-wrap gap-4">
       <div>
-        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Unified Operations Matrix</span>
-        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Calendar Control</h1>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Unified Operations Matrix</span>
+        <h1 class="text-2xl font-extrabold text-white tracking-tight mt-1">Calendar Control</h1>
       </div>
-      <a href="/book" target="_blank" class="bg-brand-primary hover:bg-violet-600 text-white px-4 py-2 rounded-xl text-xs font-semibold transition">
-        Launch Live Public Gateway &rarr;
+      <a href="/book" target="_blank" class="bg-brand-primary hover:bg-violet-600 text-white px-4 py-2 rounded-xl text-xs font-semibold transition font-mono">
+        Open Public Portal &rarr;
       </a>
     </div>
 
-    {calendarFeedback && (
-      <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">
-        {calendarFeedback}
-      </div>
-    )}
+    {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div class="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start w-full">
       
-      <div class="lg:col-span-2 space-y-4">
-        <div class="bg-brand-surface/60 border border-slate-800 rounded-2xl p-6 shadow-xl">
-          <div class="flex justify-between items-center mb-4">
-            <h3 class="text-sm font-bold text-white uppercase tracking-wider">June 2026 Operational Matrix</h3>
-            <span class="text-xs text-slate-400 font-medium">Standard Weekdays (08:00 - 18:00)</span>
-          </div>
-          
-          <div class="grid grid-cols-7 gap-2 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-800/60 pb-2 mb-2">
-            <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div>
-          </div>
-          <div class="grid grid-cols-7 gap-2">
-            {currentMonthDays.map((day) => {
-              // Simple mockup layout engine attaching highlight indicators if matches active item dates
-              const hasEvent = day === 8; 
-              return (
-                <div class={`h-16 rounded-xl border p-2 flex flex-col justify-between text-left transition cursor-pointer ${hasEvent ? 'border-brand-primary bg-brand-primary/10' : 'border-slate-800 bg-brand-canvas hover:border-slate-700'}`}>
-                  <span class="text-xs font-mono font-bold text-slate-400">{day}</span>
-                  {hasEvent && <span class="h-1.5 w-1.5 rounded-full bg-brand-accent animate-pulse"></span>}
-                </div>
-              )
-            })}
+      <div class="xl:col-span-3 bg-brand-surface/60 border border-slate-800 rounded-xl p-5 shadow-xl w-full box-border">
+        
+        <div class="flex justify-between items-center mb-4 flex-wrap gap-2">
+          <h2 class="text-base font-bold text-white font-mono uppercase tracking-wide">
+            {currentMonthLabel} {currentYear}
+          </h2>
+          <div class="flex gap-1.5 font-mono text-xs">
+            {isPastLimit ? (
+              <span class="px-2.5 py-1 rounded bg-slate-900 text-slate-600 border border-slate-900 cursor-not-allowed">Prev</span>
+            ) : (
+              <a href={`?year=${prevYear}&month=${prevMonth}`} class="px-2.5 py-1 rounded bg-brand-canvas text-slate-300 border border-slate-800 hover:border-brand-primary transition">Prev</a>
+            )}
+            
+            <a href="?year=2026&month=6" class="px-2.5 py-1 rounded bg-brand-canvas text-brand-accent border border-slate-800 hover:border-brand-primary transition">Current</a>
+            
+            {isFutureLimit ? (
+              <span class="px-2.5 py-1 rounded bg-slate-900 text-slate-600 border border-slate-900 cursor-not-allowed">Next</span>
+            ) : (
+              <a href={`?year=${nextYear}&month=${nextMonth}`} class="px-2.5 py-1 rounded bg-brand-canvas text-slate-300 border border-slate-800 hover:border-brand-primary transition">Next</a>
+            )}
           </div>
         </div>
 
-        <div class="space-y-3 pt-4">
-          <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Agenda Timeline</h3>
-          {bookedMeetings.map((m) => (
-            <div class={`p-4 rounded-xl border flex justify-between items-center ${m.status === 'Blocked' ? 'bg-brand-canvas/40 border-slate-900 opacity-60' : 'bg-brand-surface border-slate-800'}`}>
-              <div>
-                <span class={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded uppercase ${m.status === 'Blocked' ? 'bg-slate-800 text-slate-400' : 'bg-brand-accent/20 text-brand-accent'}`}>
-                  {m.status}
-                </span>
-                <h4 class="text-sm font-bold text-white mt-1">{m.meeting_subject}</h4>
-                <p class="text-xs text-slate-400">{m.client_name}</p>
-              </div>
-              <div class="text-right font-mono text-xs">
-                <p class="text-white font-bold">{new Date(m.start_time).toLocaleDateString('en-GB')}</p>
-                <p class="text-brand-accent font-semibold mt-0.5">{new Date(m.start_time).toLocaleTimeString('en-GB', {hour: '2-digit', minute:'2-digit'})} GMT</p>
-              </div>
-            </div>
-          ))}
+        <div class="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-800/60 pb-2 mb-2">
+          <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div>
+        </div>
+
+        <div class="grid grid-cols-7 gap-1.5 w-full">
+          {paddingCells.map(() => <div class="h-16 bg-slate-950/20 rounded-lg border border-transparent"></div>)}
+
+          {calendarGridDays.map((day) => {
+            const formattedDayStr = String(day).padStart(2, '0');
+            const formattedMonthStr = String(currentMonth).padStart(2, '0');
+            const loopDateIsoKey = `${currentYear}-${formattedMonthStr}-${formattedDayStr}`;
+            
+            // Evaluates matches to attach active indicator points onto cells
+            const dayAllocations = bookedMeetings.filter((m: any) => m.start_time.startsWith(loopDateIsoKey));
+            const hasMeetings = dayAllocations.some((m: any) => m.status === 'Scheduled');
+            const hasBlockouts = dayAllocations.some((m: any) => m.status === 'Blocked' || m.status === 'Cancelled');
+
+            return (
+              <button 
+                onclick={`window.trigger_cell_allocation_drawer('${loopDateIsoKey}', '${day} ${currentMonthLabel}')`}
+                class={`h-16 rounded-xl border p-2 flex flex-col justify-between text-left transition relative overflow-hidden group w-full ${hasMeetings ? 'border-brand-primary bg-brand-primary/5 hover:bg-brand-primary/10' : hasBlockouts ? 'border-slate-800 bg-slate-900/20 opacity-60' : 'border-slate-800 bg-brand-canvas hover:border-slate-700'}`}
+              >
+                <span class="text-xs font-mono font-bold text-slate-400 group-hover:text-white transition-colors">{day}</span>
+                <div class="flex gap-1">
+                  {hasMeetings && <span class="h-1.5 w-1.5 rounded-full bg-brand-accent animate-pulse"></span>}
+                  {hasBlockouts && <span class="h-1.5 w-1.5 rounded-full bg-slate-600"></span>}
+                </div>
+              </button>
+            )
+          })}
         </div>
       </div>
 
-      <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-2">Block Availability</h3>
-        <p class="text-xs text-slate-400 mb-4">Instantly exclude custom intervals from the public client reservation engine interface.</p>
-        <form method="POST" class="space-y-4">
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Exclusion Target Date *</label>
-            <input type="date" name="blockDate" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+      <div id="allocationDrawerControl" class="bg-brand-surface/80 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4 w-full box-border">
+        <div>
+          <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Matrix Selection Controls</h3>
+          <p class="text-[11px] text-slate-500 mt-0.5">Click any calendar day cell node window layout directly to stage actions.</p>
+        </div>
+
+        <div id="drawerSelectionPlaceholder" class="p-4 rounded-lg bg-brand-canvas/40 border border-dashed border-slate-800 text-slate-500 text-center text-xs font-mono">
+          No target day node loaded.
+        </div>
+
+        <div id="drawerActionContainer" class="space-y-4 hidden w-full">
+          <div class="p-2.5 rounded-lg bg-brand-canvas border border-slate-800 text-xs font-mono text-brand-accent flex justify-between items-center">
+            <span>Staged:</span> <span id="displaySelectedTargetLabel" class="text-white font-bold"></span>
           </div>
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Start Time Block (GMT) *</label>
-            <input type="time" name="blockTime" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
-          </div>
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Lockout Rationale Note</label>
-            <input type="text" name="reason" placeholder="e.g. Scheduled Network Core Maintenance" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
-          </div>
-          <button type="submit" class="w-full bg-slate-950 border border-slate-800 text-slate-200 hover:border-brand-accent hover:text-white font-bold text-xs py-3 rounded-xl transition">
-            Enforce Core Matrix Blockout
-          </button>
-        </form>
+
+          <form method="POST" class="space-y-3 border-t border-slate-800/60 pt-3">
+            <input type="hidden" name="actionType" value="create_block" />
+            <input type="hidden" id="submitTargetInputDate" name="targetDate" value="" />
+            
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Start Time (GMT) *</label>
+              <input type="time" name="targetTime" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Classification Class Type *</label>
+              <select name="blockStatus" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white">
+                <option value="Blocked">Enforce Blockout Time</option>
+                <option value="Scheduled">Log Corporate Appointment</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Subject Reference Note *</label>
+              <input type="text" name="subject" required placeholder="e.g. Server Migration Focus Window" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
+            </div>
+
+            <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-2 rounded-lg transition font-mono uppercase tracking-wider">
+              Enforce Action Link
+            </button>
+          </form>
+        </div>
       </div>
 
     </div>
+
+    <div class="space-y-3 w-full overflow-hidden pt-4">
+      <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">Comprehensive Active Schedule Ledger</h3>
+      <div class="border border-slate-800 rounded-xl bg-brand-surface/30 shadow-2xl w-full overflow-hidden">
+        <table class="w-full min-w-full divide-y divide-slate-800 text-left table-fixed border-collapse">
+          <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+            <tr>
+              <th class="px-3 py-3 w-[20%]">Timestamp Date Frame</th>
+              <th class="px-3 py-3 w-[25%]">Allocation Subject Context</th>
+              <th class="px-3 py-3 w-[25%]">Target Participant Record</th>
+              <th class="px-3 py-3 w-[15%]">State Class</th>
+              <th class="px-3 py-3 text-right w-[15%]">Controls</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
+            {bookedMeetings.length === 0 ? (
+              <tr>
+                <td colspan="5" class="px-4 py-8 text-center text-slate-500 font-mono">No tracking allocations logged across distributed storage instances.</td>
+              </tr>
+            ) : (
+              bookedMeetings.map((meeting: any) => {
+                const isItemEditing = editTargetId === meeting.id;
+                const rowFormId = `form-meeting-row-${meeting.id}`;
+
+                return (
+                  <tr class="hover:bg-slate-900/30 transition">
+                    {isItemEditing && (
+                      <form method="POST" id={rowFormId}>
+                        <input type="hidden" name="actionType" value="update_status" />
+                        <input type="hidden" name="itemId" value={meeting.id} />
+                      </form>
+                    )}
+
+                    <td class="px-3 py-3 font-mono text-[11px] whitespace-normal break-words">
+                      <div class="font-bold text-white">{new Date(meeting.start_time).toLocaleDateString('en-GB')}</div>
+                      <div class="text-brand-accent font-semibold mt-0.5">{new Date(meeting.start_time).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'})} GMT</div>
+                    </td>
+
+                    <td class="px-3 py-3 whitespace-normal break-words font-medium text-slate-200">
+                      {meeting.meeting_subject}
+                    </td>
+
+                    <td class="px-3 py-3 font-mono text-[11px] whitespace-normal break-all text-slate-400">
+                      <div>{meeting.client_name}</div>
+                      <div class="text-slate-600 mt-0.5">{meeting.client_email}</div>
+                    </td>
+
+                    <td class="px-3 py-3 whitespace-normal break-words">
+                      {isItemEditing ? (
+                        <select name="status" form={rowFormId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white w-full max-w-[110px]">
+                          <option value="Scheduled" selected={meeting.status === 'Scheduled'}>Scheduled</option>
+                          <option value="Blocked" selected={meeting.status === 'Blocked'}>Blocked</option>
+                          <option value="Cancelled" selected={meeting.status === 'Cancelled'}>Cancelled</option>
+                          <option value="Completed" selected={meeting.status === 'Completed'}>Completed</option>
+                        </select>
+                      ) : (
+                        <span class={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border inline-block break-words ${meeting.status === 'Scheduled' ? 'bg-brand-primary/10 border-brand-primary/30 text-brand-accent' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
+                          {meeting.status}
+                        </span>
+                      )}
+                    </td>
+
+                    <td class="px-3 py-3 text-right font-mono text-[11px] whitespace-normal break-words">
+                      {isItemEditing ? (
+                        <div class="flex flex-col items-end gap-1">
+                          <button type="submit" form={rowFormId} class="text-emerald-400 font-bold hover:underline">Save</button>
+                          <a href="?" class="text-slate-500 hover:underline">Cancel</a>
+                        </div>
+                      ) : (
+                        <div class="flex flex-col items-end gap-1">
+                          <a href={`?year=${currentYear}&month=${currentMonth}&editId=${meeting.id}`} class="text-brand-accent hover:underline">State</a>
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={meeting.id} />
+                            <button type="submit" class="text-amber-500 hover:underline">Archive</button>
+                          </form>
+                          <form method="POST" class="inline" onsubmit="return confirm('Purge row?');">
+                            <input type="hidden" name="actionType" value="purge" /><input type="hidden" name="itemId" value={meeting.id} />
+                            <button type="submit" class="text-rose-500 font-bold hover:underline">Purge</button>
+                          </form>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </main>
+
+  <script is:inline>
+    window.trigger_cell_allocation_drawer = function(isoDate, displayLabel) {
+      document.getElementById('drawerSelectionPlaceholder').style.display = 'none';
+      
+      const actionContainer = document.getElementById('drawerActionContainer');
+      actionContainer.style.display = 'block';
+      actionContainer.classList.remove('hidden');
+      
+      document.getElementById('displaySelectedTargetLabel').innerText = displayLabel;
+      document.getElementById('submitTargetInputDate').value = isoDate;
+    }
+  </script>
 </Layout>
