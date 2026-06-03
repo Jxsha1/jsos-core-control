@@ -18,7 +18,7 @@ if (Astro.request.method === "POST") {
       const clientId = formData.get("clientId");
       const title = formData.get("title");
       const grossValue = formData.get("grossValue");
-      const stage = formData.get("stage");
+      const stage = formData.get("stage") || "Discovery"; // Enforces Discovery initial default fallback configuration
       const contractFile = formData.get("contractFile") as File;
 
       let r2Key = null; let filename = null;
@@ -32,7 +32,7 @@ if (Astro.request.method === "POST") {
         INSERT INTO opportunities (id, client_id, title, gross_value, stage, contract_r2_key, contract_filename, is_archived)
         VALUES (?, ?, ?, ?, ?, ?, ?, 0)
       `).bind(crypto.randomUUID(), clientId, title, parseFloat(grossValue.toString()), stage, r2Key, filename).run();
-      feedbackMessage = "Success: Pipeline deal locked and indexed.";
+      feedbackMessage = "Success: Sales progression record locked at Discovery baseline.";
     }
 
     if (action === "update") {
@@ -40,55 +40,36 @@ if (Astro.request.method === "POST") {
       const title = formData.get("title");
       const grossValue = formData.get("grossValue");
       const stage = formData.get("stage");
-      const contractFile = formData.get("contractFile") as File;
 
-      let r2Key = null; let filename = null;
-      if (contractFile && contractFile.size > 0) {
-        filename = contractFile.name;
-        r2Key = `contracts/${crypto.randomUUID()}-${filename}`;
-        await r2.put(r2Key, Buffer.from(await contractFile.arrayBuffer()), { contentType: contractFile.type });
-        
-        await db.prepare(`
-          UPDATE opportunities SET title = ?, gross_value = ?, stage = ?, contract_r2_key = ?, contract_filename = ? WHERE id = ?
-        `).bind(title, parseFloat(grossValue.toString()), stage, r2Key, filename, id).run();
-      } else {
-        await db.prepare(`
-          UPDATE opportunities SET title = ?, gross_value = ?, stage = ? WHERE id = ?
-        `).bind(title, parseFloat(grossValue.toString()), stage, id).run();
-      }
-      feedbackMessage = "Success: Pipeline deal updated.";
+      await db.prepare(`
+        UPDATE opportunities SET title = ?, gross_value = ?, stage = ? WHERE id = ?
+      `).bind(title, parseFloat(grossValue.toString()), stage, id).run();
+      feedbackMessage = "Success: Pipeline data modifications committed inline.";
     }
 
     if (action === "archive") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE opportunities SET is_archived = 1 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Deal record moved to archive storage.";
+      feedbackMessage = "Success: Deal tracked parameters relocated to archives.";
     }
 
     if (action === "restore") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE opportunities SET is_archived = 0 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Deal record restored to pipeline view.";
+      feedbackMessage = "Success: Deal returned to active matrix streams.";
     }
 
     if (action === "purge") {
       const id = formData.get("itemId");
-      // Read contract references to wipe orphaned Cloudflare R2 binary objects securely
       const record = await db.prepare("SELECT contract_r2_key FROM opportunities WHERE id = ?").bind(id).first();
-      if (record?.contract_r2_key) {
-        await r2.delete(record.contract_r2_key);
-      }
+      if (record?.contract_r2_key) await r2.delete(record.contract_r2_key);
+      
       await db.prepare("DELETE FROM opportunities WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Deal parameters and storage objects permanently purged.";
+      feedbackMessage = "Success: Hardware nodes wiped completely.";
     }
   } catch (err: any) {
-    feedbackMessage = `Operational Alert: ${err.message}`;
+    feedbackMessage = `Acquisition Fault Boundary: ${err.message}`;
   }
-}
-
-let editingItem: any = null;
-if (editTargetId) {
-  editingItem = await db.prepare("SELECT * FROM opportunities WHERE id = ?").bind(editTargetId).first();
 }
 
 let baseQuery = `
@@ -106,89 +87,91 @@ baseQuery += " ORDER BY o.gross_value DESC";
 
 const opportunitiesList = (await db.prepare(baseQuery).bind(...queryParams).all()).results || [];
 const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHERE is_archived = 0 ORDER BY company_name ASC").all()).results || [];
+
+// Linear Stepper Stages Layout Construction Rules Array
+const visualProgressionSteps = [
+  { key: 'Discovery', label: 'Discovery' },
+  { key: 'Official Quote', label: 'Quote Sent' },
+  { key: 'Contract Negotiation', label: 'Negotiation' },
+  { key: 'Contract Won', label: 'Won' } // Handled automatically via invoice link trigger parameters
+];
 ---
 
-<Layout title="Sales Ledger & Contract Matrix | JSOS Core Control">
+<Layout title="Bespoke Pipeline Tracking Management | JSOS Core Control">
   <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
     
     <div class="flex justify-between items-end border-b border-slate-800 pb-6">
       <div>
-        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Acquisition Tracking</span>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Deal Flow Infrastructure</span>
         <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Sales Tracker & Contracts</h1>
       </div>
-      <div class="flex gap-2">
-        <a href="?view=active" class={`px-4 py-2 rounded-xl text-xs font-bold border ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Active Opportunities</a>
-        <a href="?view=archived" class={`px-4 py-2 rounded-xl text-xs font-bold border ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived Deals</a>
+      <div class="flex gap-2 font-mono text-xs">
+        <a href="?view=active" class={`px-4 py-2 rounded-xl border font-bold transition ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Pipeline Workspace</a>
+        <a href="?view=archived" class={`px-4 py-2 rounded-xl border font-bold transition ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived Repository</a>
       </div>
     </div>
 
     {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
 
-    <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+    <div class="grid grid-cols-1 xl:grid-cols-4 gap-8">
       
       <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">{editingItem ? "Update Pipeline Parameters" : "Log New Pipeline Deal"}</h3>
+        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Initialize Acquisition Log</h3>
         <form method="POST" enctype="multipart/form-data" class="space-y-4">
-          <input type="hidden" name="actionType" value={editingItem ? "update" : "create"} />
-          {editingItem && <input type="hidden" name="itemId" value={editingItem.id} />}
+          <input type="hidden" name="actionType" value="create" />
           
-          {!editingItem && (
-            <div>
-              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Target Account *</label>
-              <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
-                <option value="">Select Account</option>
-                {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
-              </select>
-            </div>
-          )}
-
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Deal Title Reference *</label>
-            <input type="text" name="title" value={editingItem?.title || ""} required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
-          </div>
-
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Gross Contract Value (£) *</label>
-            <input type="number" name="grossValue" step="0.01" value={editingItem?.gross_value || ""} required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
-          </div>
-
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Pipeline Stage Alignment *</label>
-            <select name="stage" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
-              <option value="Discovery" selected={editingItem?.stage === "Discovery"}>Discovery</option>
-              <option value="Proposal Out" selected={editingItem?.stage === "Proposal Out"}>Proposal Out</option>
-              <option value="Contract Negotiation" selected={editingItem?.stage === "Contract Negotiation"}>Contract Negotiation</option>
-              <option value="Closed Won" selected={editingItem?.stage === "Closed Won"}>Closed Won</option>
-              <option value="Closed Lost" selected={editingItem?.stage === "Closed Lost"}>Closed Lost</option>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Client profile *</label>
+            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none">
+              <option value="">Select Target Account</option>
+              {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
             </select>
           </div>
 
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Executed Contract Document</label>
-            <input type="file" name="contractFile" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer" />
-            {editingItem?.contract_filename && <p class="text-[10px] text-emerald-400 mt-1 font-mono">Current: {editingItem.contract_filename}</p>}
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Deal Title Reference *</label>
+            <input type="text" name="title" required placeholder="e.g. Server Array Support Suite" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white" />
           </div>
 
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono tracking-wide">
-            {editingItem ? "Commit Deal Changes" : "Commit Pipeline Deal"}
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Gross Proposal Value (£) *</label>
+            <input type="number" name="grossValue" step="0.01" required placeholder="2400" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white" />
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Entry Stage *</label>
+            <select name="stage" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white">
+              <option value="Discovery" selected>Discovery (Initial Estimate)</option>
+              <option value="Official Quote">Official Quote Out</option>
+              <option value="Contract Negotiation">Contract Negotiation</option>
+              <option value="Contract Lost">Contract Lost (Dropped Deal)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Upload Executive Contract / PDF</label>
+            <input type="file" name="contractFile" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-[11px] file:bg-slate-800 file:text-slate-200 cursor-pointer" />
+          </div>
+
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono">
+            Execute Pipeline Mappings
           </button>
-          {editingItem && <a href="?" class="block text-center text-[10px] text-slate-500 hover:text-slate-300 font-mono mt-2">&times; Cancel Selection</a>}
         </form>
       </div>
 
-      <div class="lg:col-span-3 space-y-4">
+      <div class="xl:col-span-3 space-y-4">
         
         <div class="flex items-center justify-between bg-brand-surface/40 border border-slate-800 px-4 py-3 rounded-xl">
           <form method="GET" class="flex items-center gap-3">
             <input type="hidden" name="view" value={viewMode} />
-            <label class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">Pipeline Stage Scope:</label>
+            <label class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">Isolate Workflow Stage Matrix:</label>
             <select name="stageFilter" onchange="this.form.submit()" class="bg-brand-canvas border border-slate-800 rounded-lg text-xs text-slate-300 px-3 py-1.5 focus:outline-none focus:border-brand-primary">
-              <option value="All" selected={stageFilter === 'All'}>All Pipeline Tiers</option>
+              <option value="All" selected={stageFilter === 'All'}>All Progression Stages</option>
               <option value="Discovery" selected={stageFilter === 'Discovery'}>Discovery</option>
-              <option value="Proposal Out" selected={stageFilter === 'Proposal Out'}>Proposal Out</option>
+              <option value="Official Quote" selected={stageFilter === 'Official Quote'}>Official Quote</option>
               <option value="Contract Negotiation" selected={stageFilter === 'Contract Negotiation'}>Contract Negotiation</option>
-              <option value="Closed Won" selected={stageFilter === 'Closed Won'}>Closed Won</option>
-              <option value="Closed Lost" selected={stageFilter === 'Closed Lost'}>Closed Lost</option>
+              <option value="Contract Won" selected={stageFilter === 'Contract Won'}>Contract Won</option>
+              <option value="Contract Lost" selected={stageFilter === 'Contract Lost'}>Contract Lost</option>
             </select>
           </form>
         </div>
@@ -197,38 +180,86 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
           <table class="min-w-full divide-y divide-slate-800 text-left">
             <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
               <tr>
-                <th class="px-6 py-4">Pipeline Project Title</th>
+                <th class="px-6 py-4">Opportunity Project Title</th>
                 <th class="px-6 py-4">Corporate Client</th>
-                <th class="px-6 py-4">Deal Metrics State</th>
-                <th class="px-6 py-4">Contract Reference</th>
+                <th class="px-6 py-4">Financial Value</th>
+                <th class="px-6 py-4">Deal Progression Lifecycles (Unified Row View)</th>
                 <th class="px-6 py-4 text-right">Console Controls</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
-              {opportunitiesList.length === 0 ? (
-                <tr>
-                  <td colspan="5" class="px-6 py-12 text-center text-slate-500 font-mono">No opportunities mapped within this pipeline parameter state.</td>
-                </tr>
-              ) : (
-                opportunitiesList.map((deal: any) => (
+              {opportunitiesList.map((deal: any) => {
+                const isEditing = editTargetId === deal.id;
+                const formId = `form-sales-${deal.id}`;
+
+                return (
                   <tr class="hover:bg-slate-900/40 transition-colors duration-150">
-                    <td class="px-6 py-4 font-bold text-white">{deal.title}</td>
-                    <td class="px-6 py-4 text-slate-300 font-medium">{deal.company_name}</td>
-                    <td class="px-6 py-4 whitespace-nowrap">
-                      <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-brand-canvas border border-slate-800 text-brand-accent uppercase mr-3">{deal.stage}</span>
-                      <span class="font-mono font-bold text-white">£{deal.gross_value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</span>
-                    </td>
-                    <td class="px-6 py-4 font-mono text-[11px]">
-                      {deal.contract_filename ? (
-                        <span class="text-emerald-400 underline cursor-pointer">📎 {deal.contract_filename}</span>
+                    {isEditing && (
+                      <form method="POST" id={formId}>
+                        <input type="hidden" name="actionType" value="update" />
+                        <input type="hidden" name="itemId" value={deal.id} />
+                      </form>
+                    )}
+
+                    <td class="px-6 py-4">
+                      {isEditing ? (
+                        <input type="text" name="title" value={deal.title} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
                       ) : (
-                        <span class="text-slate-600">No Asset Logged</span>
+                        <span class="font-bold text-white">{deal.title}</span>
                       )}
                     </td>
+
+                    <td class="px-6 py-4 font-medium text-slate-400">{deal.company_name}</td>
+
+                    <td class="px-6 py-4 font-mono font-bold text-white">
+                      {isEditing ? (
+                        <input type="number" name="grossValue" step="0.01" value={deal.gross_value} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-20" />
+                      ) : (
+                        <span>£{deal.gross_value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</span>
+                      )}
+                    </td>
+
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      {isEditing ? (
+                        <select name="stage" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white">
+                          <option value="Discovery" selected={deal.stage === "Discovery"}>Discovery</option>
+                          <option value="Official Quote" selected={deal.stage === "Official Quote"}>Official Quote</option>
+                          <option value="Contract Negotiation" selected={deal.stage === "Contract Negotiation"}>Contract Negotiation</option>
+                          <option value="Contract Won" selected={deal.stage === "Contract Won"}>Contract Won</option>
+                          <option value="Contract Lost" selected={deal.stage === "Contract Lost"}>Contract Lost</option>
+                        </select>
+                      ) : deal.stage === 'Contract Lost' ? (
+                        <span class="text-rose-500 font-mono font-bold text-[10px] bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded">❌ CONTRACT REJECTED / PIPELINE LOST</span>
+                      ) : (
+                        /* Horizontal linear mapping visual sequence display node row */
+                        <div class="flex items-center gap-1 font-mono text-[9px] font-bold">
+                          {visualProgressionSteps.map((step, idx) => {
+                            const isCurrent = deal.stage === step.key;
+                            const isPast = visualProgressionSteps.findIndex(s => s.key === deal.stage) >= idx;
+
+                            return (
+                              <>
+                                <span class={`px-2 py-0.5 rounded border transition ${isCurrent ? 'bg-brand-accent text-brand-canvas border-brand-accent font-extrabold shadow-sm' : isPast ? 'bg-brand-primary/20 text-brand-accent border-brand-primary/30' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                                  {step.label}
+                                </span>
+                                {idx < 3 && <span class={`text-xs ${isPast ? 'text-brand-primary' : 'text-slate-800'}`}>&rarr;</span>}
+                              </>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </td>
+
                     <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap font-mono text-[11px]">
-                      {viewMode === 'active' ? (
+                      {isEditing ? (
                         <>
-                          <a href={`?editId=${deal.id}&stageFilter=${stageFilter}`} class="text-brand-accent hover:underline">Edit</a>
+                          <button type="submit" form={formId} class="text-emerald-400 hover:underline font-bold">Save</button>
+                          <span class="text-slate-800">|</span>
+                          <a href={`?stageFilter=${stageFilter}&view=${viewMode}`} class="text-slate-500 hover:underline">Cancel</a>
+                        </>
+                      ) : viewMode === 'active' ? (
+                        <>
+                          <a href={`?editId=${deal.id}&stageFilter=${stageFilter}&view=${viewMode}`} class="text-brand-accent hover:underline">Edit</a>
                           <span class="text-slate-800">|</span>
                           <form method="POST" class="inline">
                             <input type="hidden" name="actionType" value="archive" />
@@ -244,7 +275,7 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
                             <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
                           </form>
                           <span class="text-slate-800">|</span>
-                          <form method="POST" class="inline" onsubmit="return confirm('CRITICAL RED ALERT: This operation completely deletes the contract file from R2 object storage and drops the database row. Proceed?');">
+                          <form method="POST" class="inline" onsubmit="return confirm('CRITICAL WARNING: Purge data deal block row?');">
                             <input type="hidden" name="actionType" value="purge" />
                             <input type="hidden" name="itemId" value={deal.id} />
                             <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
@@ -253,8 +284,8 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
                       )}
                     </td>
                   </tr>
-                ))
-              )}
+                );
+              })}
             </tbody>
           </table>
         </div>
