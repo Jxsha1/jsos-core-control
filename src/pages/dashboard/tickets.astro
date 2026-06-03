@@ -4,8 +4,7 @@ import Layout from '../../layouts/Layout.astro';
 const db = Astro.locals.runtime.env.DB;
 let feedbackMessage = "";
 
-// Segregate views based on active workflows vs historically resolved tasks
-const activeTab = Astro.url.searchParams.get('tab') || 'active'; // 'active', 'completed', or 'archived'
+const activeTab = Astro.url.searchParams.get('tab') || 'active'; 
 const editTargetId = Astro.url.searchParams.get('editId') || null;
 
 if (Astro.request.method === "POST") {
@@ -30,7 +29,7 @@ if (Astro.request.method === "POST") {
         INSERT INTO tickets (id, client_id, title, description, priority, status, sla_deadline, is_archived)
         VALUES (?, ?, ?, ?, ?, 'Open', ?, 0)
       `).bind(crypto.randomUUID(), clientId, title, description, priority, deadline).run();
-      feedbackMessage = "Success: Incident routed to dispatch queue.";
+      feedbackMessage = "Success: Incident routed to support queue grid.";
     }
 
     if (action === "update") {
@@ -38,44 +37,40 @@ if (Astro.request.method === "POST") {
       const title = formData.get("title");
       const description = formData.get("description");
       const priority = formData.get("priority");
+      const status = formData.get("status");
 
       await db.prepare(`
-        UPDATE tickets SET title = ?, description = ?, priority = ? WHERE id = ?
-      `).bind(title, description, priority, id).run();
-      feedbackMessage = "Success: Ticket modified.";
+        UPDATE tickets SET title = ?, description = ?, priority = ?, status = ? WHERE id = ?
+      `).bind(title, description, priority, status, id).run();
+      feedbackMessage = "Success: Incident modifications committed inline.";
     }
 
     if (action === "complete") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE tickets SET status = 'Completed' WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Ticket shifted to Completed lifecycle tier.";
+      feedbackMessage = "Success: Support engineering incident shifted to Completed status tab.";
     }
 
     if (action === "archive") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE tickets SET is_archived = 1 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Ticket shifted to archive storage.";
+      feedbackMessage = "Success: Incident moved to archive logs.";
     }
 
     if (action === "restore") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE tickets SET is_archived = 0 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Ticket returned to active status state channels.";
+      feedbackMessage = "Success: Incident returned to queue frameworks.";
     }
 
     if (action === "purge") {
       const id = formData.get("itemId");
       await db.prepare("DELETE FROM tickets WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Support row permanently dropped from database arrays.";
+      feedbackMessage = "Success: Incident permanently purged from systems.";
     }
   } catch (err: any) {
-    feedbackMessage = `PSA Engine Error: ${err.message}`;
+    feedbackMessage = `PSA Engine Halt Event: ${err.message}`;
   }
-}
-
-let editingItem: any = null;
-if (editTargetId) {
-  editingItem = await db.prepare("SELECT * FROM tickets WHERE id = ?").bind(editTargetId).first();
 }
 
 let baseQuery = `
@@ -105,12 +100,12 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
     
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-800 pb-6 gap-4">
       <div>
-        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Service Infrastructure</span>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Service Architecture Matrix</span>
         <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">PSA Support Ticketing</h1>
       </div>
       
       <div class="flex border border-slate-800 bg-brand-surface/40 p-1.5 rounded-xl text-xs font-mono font-bold">
-        <a href="?tab=active" class={`px-4 py-2 rounded-lg transition ${activeTab === 'active' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Active Incidents</a>
+        <a href="?tab=active" class={`px-4 py-2 rounded-lg transition ${activeTab === 'active' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Active Queue</a>
         <a href="?tab=completed" class={`px-4 py-2 rounded-lg transition ${activeTab === 'completed' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Completed Tasks</a>
         <a href="?tab=archived" class={`px-4 py-2 rounded-lg transition ${activeTab === 'archived' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Archive</a>
       </div>
@@ -118,81 +113,109 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
 
     {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
 
-    <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+    <div class="grid grid-cols-1 xl:grid-cols-4 gap-8">
       
       <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">{editingItem ? "Update Ticket Logs" : "Open Engineering Incident"}</h3>
+        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Open Ticket Entry</h3>
         <form method="POST" class="space-y-4">
-          <input type="hidden" name="actionType" value={editingItem ? "update" : "create"} />
-          {editingItem && <input type="hidden" name="itemId" value={editingItem.id} />}
-
-          {!editingItem && (
-            <div>
-              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Debtor Account *</label>
-              <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
-                <option value="">Select Company Account</option>
-                {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
-              </select>
-            </div>
-          )}
-
+          <input type="hidden" name="actionType" value="create" />
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Incident Summary Title *</label>
-            <input type="text" name="title" value={editingItem?.title || ""} required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
-          </div>
-
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Technical Fault Breakdown *</label>
-            <textarea name="description" required rows="4" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary resize-none">{editingItem?.description || ""}</textarea>
-          </div>
-
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">SLA Response Weighting Matrix *</label>
-            <select name="priority" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
-              <option value="Low" selected={editingItem?.priority === "Low"}>Low (Routine Support)</option>
-              <option value="Medium" selected={editingItem?.priority === "Medium"}>Medium (Standard Event)</option>
-              <option value="High" selected={editingItem?.priority === "High"}>High (Major Disruption)</option>
-              <option value="Critical" selected={editingItem?.priority === "Critical"}>Critical (Complete Outage)</option>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Debtor Target Corporate Client *</label>
+            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none">
+              <option value="">Select Account</option>
+              {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
             </select>
           </div>
-
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono tracking-wide">
-            {editingItem ? "Update Ticket State" : "Dispatch Queue Incident"}
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Incident Summary Title *</label>
+            <input type="text" name="title" required placeholder="e.g. Core Network Down" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Fault Technical Breakdown *</label>
+            <textarea name="description" required rows="4" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white resize-none"></textarea>
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">SLA Response Criticality Priority *</label>
+            <select name="priority" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2 text-xs text-white">
+              <option value="Low">Low Priority</option>
+              <option value="Medium" selected>Medium Priority</option>
+              <option value="High">High Priority</option>
+              <option value="Critical">Critical Priority (Outage Event)</option>
+            </select>
+          </div>
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono">
+            Dispatch Queue Incident
           </button>
-          {editingItem && <a href="?" class="block text-center text-[10px] text-slate-500 hover:text-slate-300 font-mono mt-2">&times; Cancel Selection</a>}
         </form>
       </div>
 
-      <div class="lg:col-span-3">
+      <div class="xl:col-span-3">
         <div class="overflow-x-auto border border-slate-800 rounded-2xl bg-brand-surface/30 shadow-2xl">
           <table class="min-w-full divide-y divide-slate-800 text-left">
             <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
               <tr>
                 <th class="px-6 py-4">Incident Parameters</th>
-                <th class="px-6 py-4">Target Corporate Entity</th>
-                <th class="px-6 py-4">Priority Severity</th>
-                <th class="px-6 py-4">SLA Resolution Target</th>
+                <th class="px-6 py-4">Target Account</th>
+                <th class="px-6 py-4">Severity Tier</th>
+                <th class="px-6 py-4">SLA Resolution Window Deadline</th>
                 <th class="px-6 py-4 text-right">Console Controls</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
-              {ticketsList.length === 0 ? (
-                <tr>
-                  <td colspan="5" class="px-6 py-12 text-center text-slate-500 font-mono">No registered task vectors matching this matrix position.</td>
-                </tr>
-              ) : (
-                ticketsList.map((ticket: any) => (
+              {ticketsList.map((ticket: any) => {
+                const isEditing = editTargetId === ticket.id;
+                const formId = `form-ticket-${ticket.id}`;
+
+                return (
                   <tr class="hover:bg-slate-900/40 transition-colors duration-150">
+                    {isEditing && (
+                      <form method="POST" id={formId}>
+                        <input type="hidden" name="actionType" value="update" />
+                        <input type="hidden" name="itemId" value={ticket.id} />
+                      </form>
+                    )}
+
                     <td class="px-6 py-4">
-                      <div class="font-bold text-white">{ticket.title}</div>
-                      <div class="text-[11px] text-slate-400 max-w-sm mt-0.5">{ticket.description}</div>
+                      {isEditing ? (
+                        <div class="space-y-1">
+                          <input type="text" name="title" value={ticket.title} form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
+                          <textarea name="description" form={formId} required class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-[11px] text-white w-full h-12 resize-none">{ticket.description}</textarea>
+                        </div>
+                      ) : (
+                        <div>
+                          <div class="font-bold text-white">{ticket.title}</div>
+                          <div class="text-[11px] text-slate-400 mt-0.5">{ticket.description}</div>
+                        </div>
+                      )}
                     </td>
+
                     <td class="px-6 py-4 font-semibold text-slate-300">{ticket.company_name}</td>
-                    <td class="px-6 py-4 whitespace-nowrap">
-                      <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border ${ticket.priority === 'Critical' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400 animate-pulse' : ticket.priority === 'High' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
-                        {ticket.priority}
-                      </span>
+
+                    <td class="px-6 py-4">
+                      {isEditing ? (
+                        <div class="space-y-1">
+                          <select name="priority" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white">
+                            <option value="Low" selected={ticket.priority === 'Low'}>Low</option>
+                            <option value="Medium" selected={ticket.priority === 'Medium'}>Medium</option>
+                            <option value="High" selected={ticket.priority === 'High'}>High</option>
+                            <option value="Critical" selected={ticket.priority === 'Critical'}>Critical</option>
+                          </select>
+                          <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white block">
+                            <option value="Open" selected={ticket.status === 'Open'}>Open</option>
+                            <option value="In_Progress" selected={ticket.status === 'In_Progress'}>In Progress</option>
+                            <option value="Completed" selected={ticket.status === 'Completed'}>Completed</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <div class="space-y-1">
+                          <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border block w-fit ${ticket.priority === 'Critical' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400 animate-pulse' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
+                            {ticket.priority}
+                          </span>
+                          <span class="text-[10px] text-slate-500 font-mono block">Status: {ticket.status}</span>
+                        </div>
+                      )}
                     </td>
+
                     <td class="px-6 py-4 font-mono text-[11px] text-slate-400">
                       {ticket.status === 'Completed' ? (
                         <span class="text-emerald-400 font-bold">Resolved Task</span>
@@ -200,8 +223,15 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
                         <span>{new Date(ticket.sla_deadline).toLocaleString('en-GB')}</span>
                       )}
                     </td>
+
                     <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap font-mono text-[11px]">
-                      {activeTab === 'active' && (
+                      {isEditing ? (
+                        <>
+                          <button type="submit" form={formId} class="text-emerald-400 hover:underline font-bold">Save</button>
+                          <span class="text-slate-800">|</span>
+                          <a href={`?tab=${activeTab}`} class="text-slate-500 hover:underline">Cancel</a>
+                        </>
+                      ) : activeTab === 'active' ? (
                         <>
                           <form method="POST" class="inline">
                             <input type="hidden" name="actionType" value="complete" />
@@ -217,15 +247,13 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
                             <button type="submit" class="text-amber-500 hover:underline">Archive</button>
                           </form>
                         </>
-                      )}
-                      {activeTab === 'completed' && (
+                      ) : activeTab === 'completed' ? (
                         <form method="POST" class="inline">
                           <input type="hidden" name="actionType" value="archive" />
                           <input type="hidden" name="itemId" value={ticket.id} />
                           <button type="submit" class="text-amber-500 hover:underline">Archive</button>
                         </form>
-                      )}
-                      {activeTab === 'archived' && (
+                      ) : (
                         <>
                           <form method="POST" class="inline">
                             <input type="hidden" name="actionType" value="restore" />
@@ -233,7 +261,7 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
                             <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
                           </form>
                           <span class="text-slate-800">|</span>
-                          <form method="POST" class="inline" onsubmit="return confirm('CRITICAL RED ALERT: Permanently purge incident record?');">
+                          <form method="POST" class="inline" onsubmit="return confirm('PERMANENT AUDIT DISPATCH PURGE WARNING: Delete incident permanent row?');">
                             <input type="hidden" name="actionType" value="purge" />
                             <input type="hidden" name="itemId" value={ticket.id} />
                             <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
@@ -242,8 +270,8 @@ const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHER
                       )}
                     </td>
                   </tr>
-                ))
-              )}
+                );
+              })}
             </tbody>
           </table>
         </div>
