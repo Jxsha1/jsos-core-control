@@ -98,7 +98,7 @@ if (Astro.request.method === "POST") {
 let baseQuery = "SELECT o.*, c.company_name FROM opportunities o JOIN clients c ON o.client_id = c.id WHERE o.is_archived = ?";
 const queryParams = [viewMode === 'archived' ? 1 : 0];
 if (stageFilter !== 'All') {
-  baseQuery += " AND o.stage = ?";
+  baseQuery += " Huntington AND o.stage = ?";
   queryParams.push(stageFilter);
 }
 baseQuery += " ORDER BY o.gross_value DESC";
@@ -180,7 +180,7 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
           </div>
 
           <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-2 rounded-lg transition font-mono">
-            Execute Pipeline Mappings
+            Log Progression
           </button>
         </form>
       </div>
@@ -211,17 +211,17 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                       </form>
                     )}
 
-                    <td class="px-4 py-3 truncate">
+                    <td class="px-4 py-3 whitespace-normal break-words">
                       {isEditing ? (
                         <input type="text" name="title" value={deal.title} form={formId} required class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
                       ) : (
-                        <span class="font-bold text-white truncate block">{deal.title}</span>
+                        <span class="font-bold text-white block break-words">{deal.title}</span>
                       )}
                     </td>
 
-                    <td class="px-4 py-3 text-slate-400 truncate font-medium">{deal.company_name}</td>
+                    <td class="px-4 py-3 text-slate-400 font-medium whitespace-normal break-words">{deal.company_name}</td>
 
-                    <td class="px-4 py-3 font-mono text-[11px]">
+                    <td class="px-4 py-3 font-mono text-[11px] whitespace-normal break-words">
                       {isEditing ? (
                         <div class="space-y-1 p-1 bg-brand-canvas/60 border border-slate-800 rounded text-[10px]">
                           <label class="flex justify-between items-center"><span>Flat:</span><input type="number" name="flatFeeAmount" step="0.01" value={deal.flat_fee_amount} form={formId} class="w-16 bg-brand-surface text-white px-1" /></label>
@@ -231,12 +231,12 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                       ) : (
                         <div>
                           <div class="font-bold text-white">£{deal.gross_value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>
-                          <div class="text-[9px] text-slate-500">F: £{deal.flat_fee_amount} | R: £{deal.recurring_amount}</div>
+                          <div class="text-[9px] text-slate-500 whitespace-normal break-words">F: £{deal.flat_fee_amount} | R: £{deal.recurring_amount}</div>
                         </div>
                       )}
                     </td>
 
-                    <td class="px-4 py-3">
+                    <td class="px-4 py-3 whitespace-normal break-words">
                       {isEditing ? (
                         <select name="stage" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white w-full">
                           <option value="Discovery" selected={deal.stage === "Discovery"}>Discovery</option>
@@ -246,10 +246,10 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                           <option value="Contract Lost" selected={deal.stage === "Contract Lost"}>Contract Lost</option>
                         </select>
                       ) : deal.stage === 'Contract Lost' ? (
-                        <span class="text-rose-500 font-mono font-bold text-[9px] bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 rounded">LOST PIPELINE</span>
+                        <span class="text-rose-500 font-mono font-bold text-[9px] bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 rounded block w-fit">LOST PIPELINE</span>
                       ) : (
-                        <div class="space-y-1.5">
-                          <div class="flex items-center gap-0.5 font-mono text-[8px] font-bold">
+                        <div class="space-y-1.5 whitespace-normal">
+                          <div class="flex flex-wrap items-center gap-0.5 font-mono text-[8px] font-bold whitespace-normal">
                             {visualProgressionSteps.map((step, idx) => {
                               const isCurrent = deal.stage === step.key;
                               const isPast = visualProgressionSteps.findIndex(s => s.key === deal.stage) >= idx;
@@ -262,9 +262,9 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                             })}
                           </div>
                           {deal.price_history && (
-                            <div class="text-[9px] font-mono text-slate-500 leading-none space-y-0.5 max-w-xs">
+                            <div class="text-[9px] font-mono text-slate-500 leading-none space-y-0.5 whitespace-normal break-words">
                               {deal.price_history.split('||').map((log: string) => (
-                                <div>• {log}</div>
+                                <div class="break-words">• {log}</div>
                               ))}
                             </div>
                           )}
@@ -272,29 +272,26 @@ const visualProgressionSteps = [{ key: 'Discovery', label: 'Discovery' }, { key:
                       )}
                     </td>
 
-                    <td class="px-4 py-3 text-right whitespace-nowrap font-mono text-[11px]">
+                    <td class="px-4 py-3 text-right font-mono text-[11px] whitespace-normal break-words">
                       {isEditing ? (
-                        <div class="space-x-1">
+                        <div class="flex flex-col items-end gap-1">
                           <button type="submit" form={formId} class="text-emerald-400 font-bold hover:underline">Save</button>
-                          <span class="text-slate-800">|</span>
                           <a href="?" class="text-slate-500 hover:underline">Cancel</a>
                         </div>
                       ) : viewMode === 'active' ? (
-                        <div class="space-x-1">
+                        <div class="flex flex-col items-end gap-1">
                           <a href={`?editId=${deal.id}&stageFilter=${stageFilter}`} class="text-brand-accent hover:underline">Edit</a>
-                          <span class="text-slate-800">|</span>
                           <form method="POST" class="inline">
                             <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={deal.id} />
                             <button type="submit" class="text-amber-500 hover:underline">Archive</button>
                           </form>
                         </div>
                       ) : (
-                        <div class="space-x-1">
+                        <div class="flex flex-col items-end gap-1">
                           <form method="POST" class="inline">
                             <input type="hidden" name="actionType" value="restore" /><input type="hidden" name="itemId" value={deal.id} />
                             <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
                           </form>
-                          <span class="text-slate-800">|</span>
                           <form method="POST" class="inline" onsubmit="return confirm('Wipe element?');">
                             <input type="hidden" name="actionType" value="purge" /><input type="hidden" name="itemId" value={deal.id} />
                             <button type="submit" class="text-rose-500 font-bold hover:underline">Purge</button>
