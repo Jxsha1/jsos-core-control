@@ -5,25 +5,20 @@
   "kv_namespaces": [
     {
       "binding": "SESSION",
-      "id": "ENTER_YOUR_ACTUAL_KV_NAMESPACE_ID_HERE"
+      "id": "ENTER_YOUR_KV_NAMESPACE_ID"
     }
   ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "jsos-core-db",
-      "database_id": "ENTER_YOUR_ACTUAL_D1_DATABASE_ID_HERE"
+      "database_id": "ENTER_YOUR_D1_DATABASE_ID"
     }
   ],
   "r2_buckets": [
     {
       "binding": "INVOICE_VAULT",
       "bucket_name": "jsos-invoice-vault"
-    }
-  ],
-  "email_sending": [
-    {
-      "binding": "EMAIL"
     }
   ]
 }
