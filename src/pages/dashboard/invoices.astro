@@ -27,7 +27,7 @@ if (Astro.request.method === "POST") {
       const totalCombinedCost = flatFeeAmount + recurringAmount;
 
       if (clientId && prefix && description && totalCombinedCost > 0) {
-        const client = await db.prepare("SELECT company_name, email FROM clients WHERE id = ?").bind(clientId).first();
+        const client = await db.prepare("SELECT company_name FROM clients WHERE id = ?").bind(clientId).first();
         if (!client) throw new Error("Target account error.");
         
         const name = client.company_name.trim();
@@ -43,7 +43,6 @@ if (Astro.request.method === "POST") {
         const dueStr = due.toISOString().split('T')[0];
         const invoiceId = crypto.randomUUID();
 
-        // Standard statement preparation block completely free of any text typos
         await db.prepare(`
           INSERT INTO invoices (
             id, client_id, opportunity_id, invoice_number, item_description, 
@@ -55,20 +54,6 @@ if (Astro.request.method === "POST") {
           isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, 
           totalCombinedCost, 'Generated', issuedStr, dueStr, 0
         ).run();
-
-        const emailBinding = Astro.locals.runtime.env.EMAIL;
-        if (emailBinding) {
-          try {
-            await emailBinding.send({
-              to: [{ email: client.email, name: client.company_name }],
-              from: { email: "billing@jsos.uk", name: "JS Office Solutions Billing" },
-              subject: `Invoice Generated: ${generatedInvoiceNumber}`,
-              text: `Hello,\n\nA new invoice statement has been generated for your account.\n\nInvoice Number: ${generatedInvoiceNumber}\nAmount Due: £${totalCombinedCost.toLocaleString('en-GB', {minimumFractionDigits:2})}\nItem Summary: ${description}\n\nThank you for your business.`
-            });
-          } catch (mailError) {
-            console.error(mailError);
-          }
-        }
 
         if (opportunityId) {
           const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(opportunityId).first();
@@ -83,7 +68,9 @@ if (Astro.request.method === "POST") {
           updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
 
           await db.prepare(`
-            UPDATE opportunities SET stage = 'Contract Won', gross_value = ?, price_history = ? WHERE id = ?
+            UPDATE opportunities 
+            SET stage = 'Contract Won', gross_value = ?, price_history = ? 
+            WHERE id = ?
           `).bind(totalCombinedCost, updatedHistory, opportunityId).run();
         }
         feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled.`;
@@ -95,7 +82,7 @@ if (Astro.request.method === "POST") {
       const nextStatus = formData.get("status");
       const cost = parseFloat(formData.get("amountDue")?.toString() || "0");
 
-      const record = await db.prepare("SELECT i.status, i.sent_date, i.paid_date, i.opportunity_id, c.email, c.company_name, i.invoice_number FROM invoices i JOIN clients c ON i.client_id = c.id WHERE i.id = ?").bind(id).first();
+      const record = await db.prepare("SELECT status, sent_date, paid_date, opportunity_id FROM invoices WHERE id = ?").bind(id).first();
       const currentTimestamp = new Date().toISOString().split('T')[0];
       
       let sentDate = record?.sent_date || null;
@@ -110,20 +97,6 @@ if (Astro.request.method === "POST") {
       await db.prepare(`
         UPDATE invoices SET status = ?, amount_due = ?, sent_date = ?, paid_date = ? WHERE id = ?
       `).bind(nextStatus, cost, sentDate, paidDate, id).run();
-
-      const emailBinding = Astro.locals.runtime.env.EMAIL;
-      if (emailBinding && record) {
-        try {
-          await emailBinding.send({
-            to: [{ email: record.email, name: record.company_name }],
-            from: { email: "billing@jsos.uk", name: "JS Office Solutions Billing" },
-            subject: `Invoice Status Update: ${record.invoice_number}`,
-            text: `Hello,\n\nYour invoice statement ${record.invoice_number} status has been updated to: ${nextStatus}.\n\nTotal Balance: £${cost.toLocaleString('en-GB', {minimumFractionDigits:2})}\n\nThank you.`
-          });
-        } catch (mailError) {
-          console.error(mailError);
-        }
-      }
       
       if (record?.opportunity_id) {
         const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(record.opportunity_id).first();
