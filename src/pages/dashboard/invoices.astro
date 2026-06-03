@@ -41,16 +41,44 @@ if (Astro.request.method === "POST") {
         const issuedStr = new Date().toISOString().split('T')[0];
         const due = new Date(); due.setDate(due.getDate() + 14);
         const dueStr = due.toISOString().split('T')[0];
-        
-        await db.prepare(`
-          INSERT INTO invoices (id, client_id, opportunity_id, invoice_number, item_description, is_flat_fee, flat_fee_amount, is_recurring, recurring_interval, recurring_amount, amount_due, status, issued_date, due_date, is_archived)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Generated', ?, ?, 0)
-        `).bind(crypto.randomUUID(), clientId, opportunityId || null, generatedInvoiceNumber, description, isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, totalCombinedCost, issuedStr, dueStr).run();
+        const invoiceId = crypto.randomUUID();
 
+        await db.prepare(`
+          INSERT INTO invoices (
+            id, client_id, opportunity_id, invoice_number, item_description, 
+            is_flat_fee, flat_fee_amount, is_recurring, recurring_interval, 
+            recurring_amount, amount_due, status, issued_date, due_date, is_archived
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          invoiceId, clientId, opportunityId || null, generatedInvoiceNumber, description, 
+          isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, 
+          totalCombinedCost, 'Generated', issuedStr, dueStr, 0
+        ).run();
+
+        // Financial coupling alignment loop syncing values directly to active sales projects
         if (opportunityId) {
-          await db.prepare("UPDATE opportunities SET stage = 'Contract Won' WHERE id = ?").bind(opportunityId).run();
+          const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(opportunityId).first();
+          
+          const date = new Date();
+          const dd = String(date.getDate()).padStart(2, '0');
+          const mm = String(date.getMonth() + 1).padStart(2, '0');
+          const yy = String(date.getFullYear()).slice(-2);
+          const dateStr = `${dd}/${mm}/${yy}`;
+          
+          const logEntry = `Contract Won - £${totalCombinedCost.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
+          let updatedHistory = currentOpp?.price_history || "";
+          updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
+
+          await db.prepare(`
+            UPDATE opportunities 
+            SET stage = 'Contract Won', gross_value = ?, price_history = ? 
+            WHERE id = ?
+          `).bind(totalCombinedCost, updatedHistory, opportunityId).run();
+          
+          feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled. Connected sales project automatically advanced to Contract Won with values matched to this invoice.`;
+        } else {
+          feedbackMessage = `Success: Standalone invoice ${generatedInvoiceNumber} compiled.`;
         }
-        feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled.`;
       }
     }
 
@@ -59,7 +87,7 @@ if (Astro.request.method === "POST") {
       const nextStatus = formData.get("status");
       const cost = parseFloat(formData.get("amountDue")?.toString() || "0");
 
-      const record = await db.prepare("SELECT status, sent_date, paid_date FROM invoices WHERE id = ?").bind(id).first();
+      const record = await db.prepare("SELECT status, sent_date, paid_date, opportunity_id FROM invoices WHERE id = ?").bind(id).first();
       const currentTimestamp = new Date().toISOString().split('T')[0];
       
       let sentDate = record?.sent_date || null;
@@ -77,6 +105,24 @@ if (Astro.request.method === "POST") {
         UPDATE invoices SET status = ?, amount_due = ?, sent_date = ?, paid_date = ? WHERE id = ?
       `).bind(nextStatus, cost, sentDate, paidDate, id).run();
       
+      // If the value gets updated inline later this keeps the sales data synchronised
+      if (record?.opportunity_id) {
+        const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(record.opportunity_id).first();
+        const date = new Date();
+        const dd = String(date.getDate()).padStart(2, '0');
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const yy = String(date.getFullYear()).slice(-2);
+        const dateStr = `${dd}/${mm}/${yy}`;
+        
+        const logEntry = `Value Adjusted - £${cost.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
+        let updatedHistory = currentOpp?.price_history || "";
+        updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
+
+        await db.prepare(`
+          UPDATE opportunities SET gross_value = ?, price_history = ? WHERE id = ?
+        `).bind(cost, updatedHistory, record.opportunity_id).run();
+      }
+
       return Astro.redirect(`/dashboard/invoices?view=${viewMode}`);
     }
 
@@ -233,6 +279,7 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                     <td class="px-4 py-3 truncate">
                       <div class="font-bold text-white truncate">{invoice.company_name}</div>
                       <div class="text-[10px] text-slate-400 truncate">{invoice.item_description}</div>
+                      {invoice.project_title && <div class="text-[9px] text-brand-accent/80 font-mono mt-0.5 truncate">Project: {invoice.project_title}</div>}
                     </td>
 
                     <td class="px-4 py-3 font-mono text-[11px] truncate">
@@ -261,13 +308,13 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                               const isPast = visualProgressionSteps.findIndex(s => s.key === invoice.status) >= idx;
                               return (
                                 <>
-                                  <span class={`px-1 py-0.5 rounded border ${isCurrent ? 'bg-brand-primary text-white border-brand-primary' : isPast ? 'bg-brand-primary/10 text-brand-accent border-brand-primary/20' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>{step.label}</span>
-                                  {idx < 2 && <span class="text-slate-800">&rarr;</span>}
+                                  <span class={`px-1 py-0.5 rounded border ${isCurrent ? 'bg-brand-primary text-white border-brand-primary' : 'isPast' ? 'bg-brand-primary/10 text-brand-accent border-brand-primary/20' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>{step.label}</span>
+                                  {idx < 2 && <span class="text-slate-700">&rarr;</span>}
                                 </>
                               );
                             })}
                           </div>
-                          <div class="text-[9px] font-mono text-slate-500 leading-none space-y-0.5">
+                          <div class="text-[10px] font-mono text-slate-500 leading-none space-y-0.5">
                             {invoice.sent_date && <div>• Sent: {invoice.sent_date}</div>}
                             {invoice.paid_date && <div>• Paid: <span class="text-emerald-400 font-bold">{invoice.paid_date}</span></div>}
                           </div>
@@ -284,6 +331,8 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                         </div>
                       ) : viewMode === 'active' ? (
                         <div class="space-x-1">
+                          <button onclick={`window.print_target_statement('${invoice.invoice_number}', '${invoice.company_name}', '${invoice.item_description}', '${invoice.amount_due}')`} class="text-emerald-400 font-bold hover:underline">Export Quote</button>
+                          <span class="text-slate-800">|</span>
                           <a href={`?editId=${invoice.id}`} class="text-brand-accent hover:underline">Edit</a>
                           <span class="text-slate-800">|</span>
                           <form method="POST" class="inline">
