@@ -4,12 +4,10 @@ import Layout from '../../layouts/Layout.astro';
 const db = Astro.locals.runtime.env.DB;
 let feedbackMessage = "";
 
-// Default timeline parameters initialized to current date context
 const dateNow = new Date();
 let currentYear = parseInt(Astro.url.searchParams.get('year') || "2026");
-let currentMonth = parseInt(Astro.url.searchParams.get('month') || "6"); // June default parameter
+let currentMonth = parseInt(Astro.url.searchParams.get('month') || "6");
 
-// Process incoming calendar blockouts or manual booking insertions natively at the edge
 if (Astro.request.method === "POST") {
   try {
     const formData = await Astro.request.formData();
@@ -55,7 +53,6 @@ if (Astro.request.method === "POST") {
   }
 }
 
-// Read persistence rows from the database edge layer
 let bookedMeetings = [];
 try {
   bookedMeetings = (await db.prepare("SELECT * FROM bookings WHERE is_archived = 0 ORDER BY start_time ASC").all()).results || [];
@@ -63,10 +60,9 @@ try {
   bookedMeetings = [];
 }
 
-// Compute calendar grid variables based on requested year and month lookups
 const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
 const firstDayIndex = new Date(currentYear, currentMonth - 1, 1).getDay();
-const dayOffset = firstDayIndex === 0 ? 6 : firstDayIndex - 1; // Shifts grid array mapping to start cleanly on Monday
+const dayOffset = firstDayIndex === 0 ? 6 : firstDayIndex - 1;
 
 const calendarGridDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 const paddingCells = Array.from({ length: dayOffset }, (_, i) => i);
@@ -74,16 +70,13 @@ const paddingCells = Array.from({ length: dayOffset }, (_, i) => i);
 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const currentMonthLabel = monthNames[currentMonth - 1];
 
-// Bounds checking configuration constraining navigation between Jan 2026 and June 2027
 const isPastLimit = currentYear === 2026 && currentMonth === 1;
 const isFutureLimit = currentYear === 2027 && currentMonth === 6;
 
-// Determine chronological step points for previous month actions
 let prevMonth = currentMonth - 1;
 let prevYear = currentYear;
 if (prevMonth < 1) { prevMonth = 12; prevYear -= 1; }
 
-// Determine chronological step points for next month actions
 let nextMonth = currentMonth + 1;
 let nextYear = currentYear;
 if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
@@ -141,7 +134,6 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
             const formattedMonthStr = String(currentMonth).padStart(2, '0');
             const loopDateIsoKey = `${currentYear}-${formattedMonthStr}-${formattedDayStr}`;
             
-            // Evaluates matches to attach active indicator points onto cells
             const dayAllocations = bookedMeetings.filter((m: any) => m.start_time.startsWith(loopDateIsoKey));
             const hasMeetings = dayAllocations.some((m: any) => m.status === 'Scheduled');
             const hasBlockouts = dayAllocations.some((m: any) => m.status === 'Blocked' || m.status === 'Cancelled');
@@ -291,7 +283,8 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
                     </td>
                   </tr>
                 );
-              })}
+              })
+            )}
           </tbody>
         </table>
       </div>
