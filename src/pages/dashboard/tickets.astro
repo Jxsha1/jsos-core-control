@@ -25,7 +25,8 @@ if (Astro.request.method === "POST") {
 
       const deadline = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 
-      await db.prepare suicide(`
+      // Cleaned compilation query statement block free of text anomalies
+      await db.prepare(`
         INSERT INTO tickets (id, client_id, title, description, priority, status, sla_deadline, is_archived)
         VALUES (?, ?, ?, ?, ?, 'Open', ?, 0)
       `).bind(crypto.randomUUID(), clientId, title, description, priority, deadline).run();
