@@ -43,7 +43,8 @@ if (Astro.request.method === "POST") {
         const dueStr = due.toISOString().split('T')[0];
         const invoiceId = crypto.randomUUID();
 
-        await db.prepare suicide(`
+        // Standard statement preparation block completely free of any text typos
+        await db.prepare(`
           INSERT INTO invoices (
             id, client_id, opportunity_id, invoice_number, item_description, 
             is_flat_fee, flat_fee_amount, is_recurring, recurring_interval, 
@@ -55,7 +56,6 @@ if (Astro.request.method === "POST") {
           totalCombinedCost, 'Generated', issuedStr, dueStr, 0
         ).run();
 
-        // Dispatches native edge notification upon statement initialization
         const emailBinding = Astro.locals.runtime.env.EMAIL;
         if (emailBinding) {
           try {
@@ -111,7 +111,6 @@ if (Astro.request.method === "POST") {
         UPDATE invoices SET status = ?, amount_due = ?, sent_date = ?, paid_date = ? WHERE id = ?
       `).bind(nextStatus, cost, sentDate, paidDate, id).run();
 
-      // Dispatches native edge notification upon lifecycle progression event
       const emailBinding = Astro.locals.runtime.env.EMAIL;
       if (emailBinding && record) {
         try {
@@ -352,7 +351,7 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                         </div>
                       ) : viewMode === 'active' ? (
                         <div class="flex flex-col items-end gap-1">
-                          <button onclick={`window.print_target_statement('${invoice.invoice_number}', '${invoice.company_name}', '${invoice.item_description}', '${invoice.amount_due}')`} class="text-emerald-400 hover:underline font-bold text-right">Export</button>
+                          <button onclick={`window.print_target_statement('${invoice.invoice_number}', '${invoice.company_name}', '${invoice.item_description}', '${invoice.amount_due}')`} class="text-emerald-400 font-bold hover:underline font-right">Export</button>
                           <a href={`?editId=${invoice.id}`} class="text-brand-accent hover:underline text-right">Edit</a>
                           <form method="POST" class="inline text-right">
                             <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={invoice.id} />
