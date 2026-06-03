@@ -3,160 +3,261 @@ import Layout from '../../layouts/Layout.astro';
 
 const db = Astro.locals.runtime.env.DB;
 const r2 = Astro.locals.runtime.env.INVOICE_VAULT;
-
-let opportunitiesList: any[] = [];
-let clientsList: any[] = [];
 let feedbackMessage = "";
+
+const stageFilter = Astro.url.searchParams.get('stageFilter') || 'All';
+const viewMode = Astro.url.searchParams.get('view') || 'active';
+const editTargetId = Astro.url.searchParams.get('editId') || null;
 
 if (Astro.request.method === "POST") {
   try {
     const formData = await Astro.request.formData();
-    const actionType = formData.get("actionType");
+    const action = formData.get("actionType");
 
-    if (actionType === "create_opportunity") {
+    if (action === "create") {
       const clientId = formData.get("clientId");
       const title = formData.get("title");
       const grossValue = formData.get("grossValue");
       const stage = formData.get("stage");
       const contractFile = formData.get("contractFile") as File;
 
-      if (clientId && title && grossValue && stage) {
-        let r2Key = null;
-        let filename = null;
-
-        // Process binary streaming asset capture if a corporate contract is attached
-        if (contractFile && contractFile.size > 0) {
-          filename = contractFile.name;
-          r2Key = `contracts/${crypto.randomUUID()}-${filename}`;
-          const fileBuffer = Buffer.from(await contractFile.arrayBuffer());
-          
-          await r2.put(r2Key, fileBuffer, {
-            contentType: contractFile.type,
-            customMetadata: { originalName: filename }
-          });
-        }
-
-        await db.prepare(`
-          INSERT INTO opportunities (id, client_id, title, gross_value, stage, contract_r2_key, contract_filename)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(crypto.randomUUID(), clientId, title, parseFloat(grossValue.toString()), stage, r2Key, filename).run();
-
-        feedbackMessage = "Success: Opportunity pipeline record logged and indexed successfully.";
+      let r2Key = null; let filename = null;
+      if (contractFile && contractFile.size > 0) {
+        filename = contractFile.name;
+        r2Key = `contracts/${crypto.randomUUID()}-${filename}`;
+        await r2.put(r2Key, Buffer.from(await contractFile.arrayBuffer()), { contentType: contractFile.type });
       }
+
+      await db.prepare(`
+        INSERT INTO opportunities (id, client_id, title, gross_value, stage, contract_r2_key, contract_filename, is_archived)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+      `).bind(crypto.randomUUID(), clientId, title, parseFloat(grossValue.toString()), stage, r2Key, filename).run();
+      feedbackMessage = "Success: Pipeline deal locked and indexed.";
+    }
+
+    if (action === "update") {
+      const id = formData.get("itemId");
+      const title = formData.get("title");
+      const grossValue = formData.get("grossValue");
+      const stage = formData.get("stage");
+      const contractFile = formData.get("contractFile") as File;
+
+      let r2Key = null; let filename = null;
+      if (contractFile && contractFile.size > 0) {
+        filename = contractFile.name;
+        r2Key = `contracts/${crypto.randomUUID()}-${filename}`;
+        await r2.put(r2Key, Buffer.from(await contractFile.arrayBuffer()), { contentType: contractFile.type });
+        
+        await db.prepare(`
+          UPDATE opportunities SET title = ?, gross_value = ?, stage = ?, contract_r2_key = ?, contract_filename = ? WHERE id = ?
+        `).bind(title, parseFloat(grossValue.toString()), stage, r2Key, filename, id).run();
+      } else {
+        await db.prepare(`
+          UPDATE opportunities SET title = ?, gross_value = ?, stage = ? WHERE id = ?
+        `).bind(title, parseFloat(grossValue.toString()), stage, id).run();
+      }
+      feedbackMessage = "Success: Pipeline deal updated.";
+    }
+
+    if (action === "archive") {
+      const id = formData.get("itemId");
+      await db.prepare("UPDATE opportunities SET is_archived = 1 WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Deal record moved to archive storage.";
+    }
+
+    if (action === "restore") {
+      const id = formData.get("itemId");
+      await db.prepare("UPDATE opportunities SET is_archived = 0 WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Deal record restored to pipeline view.";
+    }
+
+    if (action === "purge") {
+      const id = formData.get("itemId");
+      // Read contract references to wipe orphaned Cloudflare R2 binary objects securely
+      const record = await db.prepare("SELECT contract_r2_key FROM opportunities WHERE id = ?").bind(id).first();
+      if (record?.contract_r2_key) {
+        await r2.delete(record.contract_r2_key);
+      }
+      await db.prepare("DELETE FROM opportunities WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Deal parameters and storage objects permanently purged.";
     }
   } catch (err: any) {
-    feedbackMessage = `Operational Exception: ${err.message}`;
+    feedbackMessage = `Operational Alert: ${err.message}`;
   }
 }
 
-try {
-  opportunitiesList = (await db.prepare(`
-    SELECT o.*, c.company_name FROM opportunities o 
-    JOIN clients c ON o.client_id = c.id 
-    ORDER BY o.gross_value DESC
-  `).all()).results || [];
-  
-  clientsList = (await db.prepare("SELECT id, company_name FROM clients ORDER BY company_name ASC").all()).results || [];
-} catch (e) {
-  opportunitiesList = [];
+let editingItem: any = null;
+if (editTargetId) {
+  editingItem = await db.prepare("SELECT * FROM opportunities WHERE id = ?").bind(editTargetId).first();
 }
+
+let baseQuery = `
+  SELECT o.*, c.company_name FROM opportunities o 
+  JOIN clients c ON o.client_id = c.id 
+  WHERE o.is_archived = ?
+`;
+const queryParams: any[] = [viewMode === 'archived' ? 1 : 0];
+
+if (stageFilter !== 'All') {
+  baseQuery += " AND o.stage = ?";
+  queryParams.push(stageFilter);
+}
+baseQuery += " ORDER BY o.gross_value DESC";
+
+const opportunitiesList = (await db.prepare(baseQuery).bind(...queryParams).all()).results || [];
+const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHERE is_archived = 0 ORDER BY company_name ASC").all()).results || [];
 ---
 
 <Layout title="Sales Ledger & Contract Matrix | JSOS Core Control">
   <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
     
-    <div class="border-b border-slate-800 pb-6">
-      <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Pipeline Acquisition Terminal</span>
-      <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Sales Tracker & Contracts</h1>
+    <div class="flex justify-between items-end border-b border-slate-800 pb-6">
+      <div>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Acquisition Tracking</span>
+        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Sales Tracker & Contracts</h1>
+      </div>
+      <div class="flex gap-2">
+        <a href="?view=active" class={`px-4 py-2 rounded-xl text-xs font-bold border ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Active Opportunities</a>
+        <a href="?view=archived" class={`px-4 py-2 rounded-xl text-xs font-bold border ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived Deals</a>
+      </div>
     </div>
 
-    {feedbackMessage && (
-      <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">
-        {feedbackMessage}
-      </div>
-    )}
+    {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
       
       <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Log Deal & Contract</h3>
+        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">{editingItem ? "Update Pipeline Parameters" : "Log New Pipeline Deal"}</h3>
         <form method="POST" enctype="multipart/form-data" class="space-y-4">
-          <input type="hidden" name="actionType" value="create_opportunity" />
+          <input type="hidden" name="actionType" value={editingItem ? "update" : "create"} />
+          {editingItem && <input type="hidden" name="itemId" value={editingItem.id} />}
           
+          {!editingItem && (
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Target Account *</label>
+              <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
+                <option value="">Select Account</option>
+                {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
+              </select>
+            </div>
+          )}
+
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Client *</label>
-            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
-              <option value="">Select Target Account</option>
-              {clientsList.map(c => <option value={c.id}>{c.company_name}</option>)}
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Deal Title Reference *</label>
+            <input type="text" name="title" value={editingItem?.title || ""} required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Gross Contract Value (£) *</label>
+            <input type="number" name="grossValue" step="0.01" value={editingItem?.gross_value || ""} required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Pipeline Stage Alignment *</label>
+            <select name="stage" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
+              <option value="Discovery" selected={editingItem?.stage === "Discovery"}>Discovery</option>
+              <option value="Proposal Out" selected={editingItem?.stage === "Proposal Out"}>Proposal Out</option>
+              <option value="Contract Negotiation" selected={editingItem?.stage === "Contract Negotiation"}>Contract Negotiation</option>
+              <option value="Closed Won" selected={editingItem?.stage === "Closed Won"}>Closed Won</option>
+              <option value="Closed Lost" selected={editingItem?.stage === "Closed Lost"}>Closed Lost</option>
             </select>
           </div>
 
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Deal Title Reference *</label>
-            <input type="text" name="title" required placeholder="e.g. Managed Infrastructure Upgrade" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Executed Contract Document</label>
+            <input type="file" name="contractFile" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer" />
+            {editingItem?.contract_filename && <p class="text-[10px] text-emerald-400 mt-1 font-mono">Current: {editingItem.contract_filename}</p>}
           </div>
 
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Gross Value (£) *</label>
-              <input type="number" name="grossValue" step="0.01" required placeholder="5000" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
-            </div>
-            <div>
-              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Pipeline Stage *</label>
-              <select name="stage" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
-                <option value="Discovery">Discovery</option>
-                <option value="Proposal Out">Proposal Out</option>
-                <option value="Contract Negotiation">Contract Negotiation</option>
-                <option value="Closed Won">Closed Won</option>
-                <option value="Closed Lost">Closed Lost</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Executed Corporate Contract (PDF / File)</label>
-            <input type="file" name="contractFile" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer" />
-          </div>
-
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition shadow-lg shadow-brand-primary/20">
-            Commit Pipeline Deal Record
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono tracking-wide">
+            {editingItem ? "Commit Deal Changes" : "Commit Pipeline Deal"}
           </button>
+          {editingItem && <a href="?" class="block text-center text-[10px] text-slate-500 hover:text-slate-300 font-mono mt-2">&times; Cancel Selection</a>}
         </form>
       </div>
 
-      <div class="lg:col-span-2 space-y-4">
-        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Active Deal Ecosystem</h3>
+      <div class="lg:col-span-3 space-y-4">
         
-        {opportunitiesList.length === 0 ? (
-          <div class="bg-brand-surface/40 border border-dashed border-slate-800 rounded-xl p-8 text-center text-slate-500 text-xs">
-            No pipeline records tracked within the edge ledger databases yet.
-          </div>
-        ) : (
-          <div class="space-y-3">
-            {opportunitiesList.map((deal) => (
-              <div class="bg-brand-surface/90 border border-slate-800 rounded-xl p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-brand-primary/40 transition">
-                <div class="space-y-1">
-                  <span class="text-[9px] font-mono font-bold text-brand-accent px-2 py-0.5 rounded bg-brand-canvas border border-slate-800 uppercase">
-                    {deal.stage}
-                  </span>
-                  <h4 class="text-sm font-bold text-white pt-1">{deal.title}</h4>
-                  <p class="text-xs text-slate-400">{deal.company_name}</p>
-                  
-                  {deal.contract_filename && (
-                    <div class="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium pt-1">
-                      <span class="text-xs">📎</span>
-                      <span class="underline cursor-pointer">{deal.contract_filename}</span>
-                    </div>
-                  )}
-                </div>
-                
-                <div class="text-right font-mono text-sm font-bold text-white w-full sm:w-auto border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-800">
-                  £{deal.gross_value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <div class="flex items-center justify-between bg-brand-surface/40 border border-slate-800 px-4 py-3 rounded-xl">
+          <form method="GET" class="flex items-center gap-3">
+            <input type="hidden" name="view" value={viewMode} />
+            <label class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">Pipeline Stage Scope:</label>
+            <select name="stageFilter" onchange="this.form.submit()" class="bg-brand-canvas border border-slate-800 rounded-lg text-xs text-slate-300 px-3 py-1.5 focus:outline-none focus:border-brand-primary">
+              <option value="All" selected={stageFilter === 'All'}>All Pipeline Tiers</option>
+              <option value="Discovery" selected={stageFilter === 'Discovery'}>Discovery</option>
+              <option value="Proposal Out" selected={stageFilter === 'Proposal Out'}>Proposal Out</option>
+              <option value="Contract Negotiation" selected={stageFilter === 'Contract Negotiation'}>Contract Negotiation</option>
+              <option value="Closed Won" selected={stageFilter === 'Closed Won'}>Closed Won</option>
+              <option value="Closed Lost" selected={stageFilter === 'Closed Lost'}>Closed Lost</option>
+            </select>
+          </form>
+        </div>
+
+        <div class="overflow-x-auto border border-slate-800 rounded-2xl bg-brand-surface/30 shadow-2xl">
+          <table class="min-w-full divide-y divide-slate-800 text-left">
+            <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+              <tr>
+                <th class="px-6 py-4">Pipeline Project Title</th>
+                <th class="px-6 py-4">Corporate Client</th>
+                <th class="px-6 py-4">Deal Metrics State</th>
+                <th class="px-6 py-4">Contract Reference</th>
+                <th class="px-6 py-4 text-right">Console Controls</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
+              {opportunitiesList.length === 0 ? (
+                <tr>
+                  <td colspan="5" class="px-6 py-12 text-center text-slate-500 font-mono">No opportunities mapped within this pipeline parameter state.</td>
+                </tr>
+              ) : (
+                opportunitiesList.map((deal: any) => (
+                  <tr class="hover:bg-slate-900/40 transition-colors duration-150">
+                    <td class="px-6 py-4 font-bold text-white">{deal.title}</td>
+                    <td class="px-6 py-4 text-slate-300 font-medium">{deal.company_name}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-brand-canvas border border-slate-800 text-brand-accent uppercase mr-3">{deal.stage}</span>
+                      <span class="font-mono font-bold text-white">£{deal.gross_value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</span>
+                    </td>
+                    <td class="px-6 py-4 font-mono text-[11px]">
+                      {deal.contract_filename ? (
+                        <span class="text-emerald-400 underline cursor-pointer">📎 {deal.contract_filename}</span>
+                      ) : (
+                        <span class="text-slate-600">No Asset Logged</span>
+                      )}
+                    </td>
+                    <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap font-mono text-[11px]">
+                      {viewMode === 'active' ? (
+                        <>
+                          <a href={`?editId=${deal.id}&stageFilter=${stageFilter}`} class="text-brand-accent hover:underline">Edit</a>
+                          <span class="text-slate-800">|</span>
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="archive" />
+                            <input type="hidden" name="itemId" value={deal.id} />
+                            <button type="submit" class="text-amber-500 hover:underline">Archive</button>
+                          </form>
+                        </>
+                      ) : (
+                        <>
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="restore" />
+                            <input type="hidden" name="itemId" value={deal.id} />
+                            <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
+                          </form>
+                          <span class="text-slate-800">|</span>
+                          <form method="POST" class="inline" onsubmit="return confirm('CRITICAL RED ALERT: This operation completely deletes the contract file from R2 object storage and drops the database row. Proceed?');">
+                            <input type="hidden" name="actionType" value="purge" />
+                            <input type="hidden" name="itemId" value={deal.id} />
+                            <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
+                          </form>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div>
