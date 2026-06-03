@@ -2,136 +2,251 @@
 import Layout from '../../layouts/Layout.astro';
 
 const db = Astro.locals.runtime.env.DB;
-let ticketsList: any[] = [];
-let clientsList: any[] = [];
-let executionFeedback = "";
+let feedbackMessage = "";
+
+// Segregate views based on active workflows vs historically resolved tasks
+const activeTab = Astro.url.searchParams.get('tab') || 'active'; // 'active', 'completed', or 'archived'
+const editTargetId = Astro.url.searchParams.get('editId') || null;
 
 if (Astro.request.method === "POST") {
   try {
     const formData = await Astro.request.formData();
-    const clientId = formData.get("clientId");
-    const title = formData.get("title");
-    const description = formData.get("description");
-    const priority = formData.get("priority");
+    const action = formData.get("actionType");
 
-    if (clientId && title && description && priority) {
-      const now = new Date();
-      let responseHours = 24;
-      let resolutionHours = 72;
+    if (action === "create") {
+      const clientId = formData.get("clientId");
+      const title = formData.get("title");
+      const description = formData.get("description");
+      const priority = formData.get("priority");
 
-      if (priority === 'Critical') { responseHours = 2; resolutionHours = 8; }
-      else if (priority === 'High') { responseHours = 4; resolutionHours = 24; }
-      else if (priority === 'Medium') { responseHours = 8; resolutionHours = 48; }
+      let hours = 24;
+      if (priority === 'Critical') hours = 2;
+      else if (priority === 'High') hours = 4;
+      else if (priority === 'Medium') hours = 8;
 
-      const resDeadline = new Date(now.getTime() + responseHours * 60 * 60 * 1000).toISOString();
-      const resolveDeadline = new Date(now.getTime() + resolutionHours * 60 * 60 * 1000).toISOString();
+      const deadline = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 
       await db.prepare(`
-        INSERT INTO tickets (id, client_id, asset_id, title, description, priority, status, sla_response_deadline, sla_resolution_deadline, created_at)
-        VALUES (?, ?, NULL, ?, ?, ?, 'Open', ?, ?, DATETIME('now'))
-      `).bind(crypto.randomUUID(), clientId, title, description, priority, resDeadline, resolveDeadline).run();
+        INSERT INTO tickets (id, client_id, title, description, priority, status, sla_deadline, is_archived)
+        VALUES (?, ?, ?, ?, ?, 'Open', ?, 0)
+      `).bind(crypto.randomUUID(), clientId, title, description, priority, deadline).run();
+      feedbackMessage = "Success: Incident routed to dispatch queue.";
+    }
 
-      executionFeedback = "Success: SLA Ticket routed to dispatch queue.";
+    if (action === "update") {
+      const id = formData.get("itemId");
+      const title = formData.get("title");
+      const description = formData.get("description");
+      const priority = formData.get("priority");
+
+      await db.prepare(`
+        UPDATE tickets SET title = ?, description = ?, priority = ? WHERE id = ?
+      `).bind(title, description, priority, id).run();
+      feedbackMessage = "Success: Ticket modified.";
+    }
+
+    if (action === "complete") {
+      const id = formData.get("itemId");
+      await db.prepare("UPDATE tickets SET status = 'Completed' WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Ticket shifted to Completed lifecycle tier.";
+    }
+
+    if (action === "archive") {
+      const id = formData.get("itemId");
+      await db.prepare("UPDATE tickets SET is_archived = 1 WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Ticket shifted to archive storage.";
+    }
+
+    if (action === "restore") {
+      const id = formData.get("itemId");
+      await db.prepare("UPDATE tickets SET is_archived = 0 WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Ticket returned to active status state channels.";
+    }
+
+    if (action === "purge") {
+      const id = formData.get("itemId");
+      await db.prepare("DELETE FROM tickets WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Support row permanently dropped from database arrays.";
     }
   } catch (err: any) {
-    executionFeedback = `Error: ${err.message}`;
+    feedbackMessage = `PSA Engine Error: ${err.message}`;
   }
 }
 
-try {
-  const tDataset = await db.prepare(`
-    SELECT t.*, c.company_name 
-    FROM tickets t 
-    JOIN clients c ON t.client_id = c.id 
-    ORDER BY CASE t.priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END, t.created_at DESC
-  `).all();
-  ticketsList = tDataset.results || [];
-  
-  const cDataset = await db.prepare("SELECT id, company_name FROM clients").all();
-  clientsList = cDataset.results || [];
-} catch (e) {
-  ticketsList = [];
+let editingItem: any = null;
+if (editTargetId) {
+  editingItem = await db.prepare("SELECT * FROM tickets WHERE id = ?").bind(editTargetId).first();
 }
+
+let baseQuery = `
+  SELECT t.*, c.company_name FROM tickets t
+  JOIN clients c ON t.client_id = c.id
+  WHERE t.is_archived = ?
+`;
+const queryParams: any[] = [];
+
+if (activeTab === 'archived') {
+  queryParams.push(1);
+} else if (activeTab === 'completed') {
+  queryParams.push(0);
+  baseQuery += " AND t.status = 'Completed'";
+} else {
+  queryParams.push(0);
+  baseQuery += " AND t.status != 'Completed'";
+}
+baseQuery += " ORDER BY CASE t.priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END, t.created_at DESC";
+
+const ticketsList = (await db.prepare(baseQuery).bind(...queryParams).all()).results || [];
+const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHERE is_archived = 0 ORDER BY company_name ASC").all()).results || [];
 ---
 
-<Layout title="JSOS Core Control | PSA Ticketing Systems">
+<Layout title="Professional Services Automation | JSOS Core Control">
   <main class="max-w-7xl mx-auto p-6 md:p-12 space-y-10">
     
-    <div>
-      <span class="text-xs font-bold text-brand-accent tracking-widest uppercase">Contractual SLA Router</span>
-      <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">Professional Services Automation</h1>
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-800 pb-6 gap-4">
+      <div>
+        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Service Infrastructure</span>
+        <h1 class="text-3xl font-extrabold text-white tracking-tight mt-1">PSA Support Ticketing</h1>
+      </div>
+      
+      <div class="flex border border-slate-800 bg-brand-surface/40 p-1.5 rounded-xl text-xs font-mono font-bold">
+        <a href="?tab=active" class={`px-4 py-2 rounded-lg transition ${activeTab === 'active' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Active Incidents</a>
+        <a href="?tab=completed" class={`px-4 py-2 rounded-lg transition ${activeTab === 'completed' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Completed Tasks</a>
+        <a href="?tab=archived" class={`px-4 py-2 rounded-lg transition ${activeTab === 'archived' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:text-white'}`}>Archive</a>
+      </div>
     </div>
 
-    {executionFeedback && (
-      <div class="p-4 bg-brand-primary/10 border border-brand-primary/30 rounded-xl text-xs text-brand-accent font-semibold">
-        {executionFeedback}
-      </div>
-    )}
+    {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
       
       <div class="bg-brand-surface/80 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit">
-        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Log Engineering Ticket</h3>
+        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">{editingItem ? "Update Ticket Logs" : "Open Engineering Incident"}</h3>
         <form method="POST" class="space-y-4">
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Account *</label>
-            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition">
-              <option value="">Select Affected Corporate Client</option>
-              {clientsList.map(c => <option value={c.id}>{c.company_name}</option>)}
-            </select>
-          </div>
+          <input type="hidden" name="actionType" value={editingItem ? "update" : "create"} />
+          {editingItem && <input type="hidden" name="itemId" value={editingItem.id} />}
+
+          {!editingItem && (
+            <div>
+              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Target Debtor Account *</label>
+              <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
+                <option value="">Select Company Account</option>
+                {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
+              </select>
+            </div>
+          )}
+
           <div>
             <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Incident Summary Title *</label>
-            <input type="text" name="title" required placeholder="e.g. Core Network Link Failure" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition" />
+            <input type="text" name="title" value={editingItem?.title || ""} required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary" />
           </div>
+
           <div>
             <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Technical Fault Breakdown *</label>
-            <textarea name="description" required rows="4" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition resize-none"></textarea>
+            <textarea name="description" required rows="4" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary resize-none">{editingItem?.description || ""}</textarea>
           </div>
+
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Priority Classification Matrix *</label>
-            <select name="priority" required class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary transition">
-              <option value="Low">Low Priority (Routine Support)</option>
-              <option value="Medium" selected>Medium Priority (Standard Event)</option>
-              <option value="High">High Priority (Major Business Disruption)</option>
-              <option value="Critical">Critical Priority (Complete Outage / Breach)</option>
+            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">SLA Response Weighting Matrix *</label>
+            <select name="priority" class="w-full bg-brand-canvas border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-primary">
+              <option value="Low" selected={editingItem?.priority === "Low"}>Low (Routine Support)</option>
+              <option value="Medium" selected={editingItem?.priority === "Medium"}>Medium (Standard Event)</option>
+              <option value="High" selected={editingItem?.priority === "High"}>High (Major Disruption)</option>
+              <option value="Critical" selected={editingItem?.priority === "Critical"}>Critical (Complete Outage)</option>
             </select>
           </div>
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition">
-            Dispatch Queue Incident
+
+          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-3 rounded-xl transition font-mono tracking-wide">
+            {editingItem ? "Update Ticket State" : "Dispatch Queue Incident"}
           </button>
+          {editingItem && <a href="?" class="block text-center text-[10px] text-slate-500 hover:text-slate-300 font-mono mt-2">&times; Cancel Selection</a>}
         </form>
       </div>
 
-      <div class="lg:col-span-2 space-y-4">
-        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Active Operations Queue</h3>
-        
-        {ticketsList.length === 0 ? (
-          <div class="bg-brand-surface/40 border border-dashed border-slate-800 rounded-xl p-8 text-center text-slate-500 text-xs">
-            No active operational technical incidents are currently pending attention.
-          </div>
-        ) : (
-          <div class="space-y-3">
-            {ticketsList.map((ticket) => (
-              <div class="bg-brand-surface/90 border border-slate-800 rounded-xl p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:border-brand-accent/40 transition">
-                <div class="space-y-1 max-w-xl">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class={`text-[9px] font-extrabold px-2 py-0.5 rounded uppercase ${ticket.priority === 'Critical' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : ticket.priority === 'High' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-800 text-slate-400'}`}>
-                      {ticket.priority}
-                    </span>
-                    <span class="text-xs font-bold text-white">{ticket.company_name}</span>
-                  </div>
-                  <h4 class="text-sm font-bold text-slate-200">{ticket.title}</h4>
-                  <p class="text-xs text-slate-400 leading-normal">{ticket.description}</p>
-                </div>
-                <div class="text-left md:text-right font-mono text-[10px] space-y-1 text-slate-400 border-t md:border-t-0 pt-2 md:pt-0 border-slate-800 w-full md:w-auto">
-                  <p><span class="text-slate-600">SLA Response:</span> <span class="text-brand-accent font-semibold">{new Date(ticket.sla_response_deadline).toLocaleTimeString('en-GB')}</span></p>
-                  <p><span class="text-slate-600">SLA Resolution:</span> <span class="text-slate-200 font-semibold">{new Date(ticket.sla_resolution_deadline).toLocaleTimeString('en-GB')}</span></p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+      <div class="lg:col-span-3">
+        <div class="overflow-x-auto border border-slate-800 rounded-2xl bg-brand-surface/30 shadow-2xl">
+          <table class="min-w-full divide-y divide-slate-800 text-left">
+            <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+              <tr>
+                <th class="px-6 py-4">Incident Parameters</th>
+                <th class="px-6 py-4">Target Corporate Entity</th>
+                <th class="px-6 py-4">Priority Severity</th>
+                <th class="px-6 py-4">SLA Resolution Target</th>
+                <th class="px-6 py-4 text-right">Console Controls</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
+              {ticketsList.length === 0 ? (
+                <tr>
+                  <td colspan="5" class="px-6 py-12 text-center text-slate-500 font-mono">No registered task vectors matching this matrix position.</td>
+                </tr>
+              ) : (
+                ticketsList.map((ticket: any) => (
+                  <tr class="hover:bg-slate-900/40 transition-colors duration-150">
+                    <td class="px-6 py-4">
+                      <div class="font-bold text-white">{ticket.title}</div>
+                      <div class="text-[11px] text-slate-400 max-w-sm mt-0.5">{ticket.description}</div>
+                    </td>
+                    <td class="px-6 py-4 font-semibold text-slate-300">{ticket.company_name}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <span class={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border ${ticket.priority === 'Critical' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400 animate-pulse' : ticket.priority === 'High' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
+                        {ticket.priority}
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 font-mono text-[11px] text-slate-400">
+                      {ticket.status === 'Completed' ? (
+                        <span class="text-emerald-400 font-bold">Resolved Task</span>
+                      ) : (
+                        <span>{new Date(ticket.sla_deadline).toLocaleString('en-GB')}</span>
+                      )}
+                    </td>
+                    <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap font-mono text-[11px]">
+                      {activeTab === 'active' && (
+                        <>
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="complete" />
+                            <input type="hidden" name="itemId" value={ticket.id} />
+                            <button type="submit" class="text-emerald-400 hover:underline font-bold">Complete</button>
+                          </form>
+                          <span class="text-slate-800">|</span>
+                          <a href={`?tab=${activeTab}&editId=${ticket.id}`} class="text-brand-accent hover:underline">Edit</a>
+                          <span class="text-slate-800">|</span>
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="archive" />
+                            <input type="hidden" name="itemId" value={ticket.id} />
+                            <button type="submit" class="text-amber-500 hover:underline">Archive</button>
+                          </form>
+                        </>
+                      )}
+                      {activeTab === 'completed' && (
+                        <form method="POST" class="inline">
+                          <input type="hidden" name="actionType" value="archive" />
+                          <input type="hidden" name="itemId" value={ticket.id} />
+                          <button type="submit" class="text-amber-500 hover:underline">Archive</button>
+                        </form>
+                      )}
+                      {activeTab === 'archived' && (
+                        <>
+                          <form method="POST" class="inline">
+                            <input type="hidden" name="actionType" value="restore" />
+                            <input type="hidden" name="itemId" value={ticket.id} />
+                            <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
+                          </form>
+                          <span class="text-slate-800">|</span>
+                          <form method="POST" class="inline" onsubmit="return confirm('CRITICAL RED ALERT: Permanently purge incident record?');">
+                            <input type="hidden" name="actionType" value="purge" />
+                            <input type="hidden" name="itemId" value={ticket.id} />
+                            <button type="submit" class="text-rose-500 hover:underline font-bold">Secure Purge</button>
+                          </form>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div>
