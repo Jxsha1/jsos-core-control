@@ -1,5 +1,5 @@
 {
-  "name": "jsos-core-control",
+  "name": "jsos-core-control-v2",
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-06-03",
   "kv_namespaces": [
