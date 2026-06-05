@@ -144,7 +144,7 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
               <button 
                 type="button"
                 data-date-cell={loopDateIsoKey}
-                onclick={`window.trigger_cell_allocation_drawer('${loopDateIsoKey}', '${day} ${currentMonthLabel}', event)`}
+                onclick={`window.trigger_cell_allocation_drawer('${loopDateIsoKey}', '${day} {currentMonthLabel}', event)`}
                 class={`h-16 rounded-xl border p-2 flex flex-col justify-between text-left transition relative overflow-hidden group w-full ${hasMeetings ? 'border-brand-primary bg-brand-primary/5 hover:bg-brand-primary/10' : hasBlockouts ? 'border-slate-800 bg-slate-900/20 opacity-60' : 'border-slate-800 bg-brand-canvas hover:border-slate-700'}`}
               >
                  <span class="text-xs font-mono font-bold text-slate-400 group-hover:text-white transition-colors">{day}</span>
