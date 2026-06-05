@@ -29,8 +29,8 @@ if (Astro.request.method === "POST") {
           const endIso = new Date(`${dateStr}T${endTime}:00Z`).toISOString();
 
           await db.prepare(`
-            INSERT INTO bookings (id, client_name, client_email, meeting_subject, start_time, end_time, status, is_archived)
-            VALUES (?, 'INTERNAL SYSTEM', 'ops@jsos.uk', ?, ?, ?, ?, 0)
+            INSERT INTO bookings (id, client_name, client_email, meeting_subject, start_time, end_time, status)
+            VALUES (?, 'INTERNAL SYSTEM', 'ops@jsos.uk', ?, ?, ?, ?)
           `).bind(crypto.randomUUID(), subject, startIso, endIso, blockStatus).run();
         }
         feedbackMessage = "Success: Operational matrix update committed live.";
@@ -46,7 +46,7 @@ if (Astro.request.method === "POST") {
 
     if (action === "archive") {
       const id = formData.get("itemId");
-      await db.prepare("UPDATE bookings SET is_archived = 1 WHERE id = ?").bind(id).run();
+      await db.prepare("UPDATE bookings SET status = 'Cancelled' WHERE id = ?").bind(id).run();
     }
 
     if (action === "purge") {
@@ -60,7 +60,7 @@ if (Astro.request.method === "POST") {
 
 let bookedMeetings = [];
 try {
-  bookedMeetings = (await db.prepare("SELECT * FROM bookings WHERE is_archived = 0 ORDER BY start_time ASC").all()).results || [];
+  bookedMeetings = (await db.prepare("SELECT * FROM bookings ORDER BY start_time ASC").all()).results || [];
 } catch (e) {
   bookedMeetings = [];
 }
@@ -91,7 +91,6 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
     
     <div class="flex justify-between items-center border-b border-slate-800 pb-4 flex-wrap gap-4">
       <div>
-        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Unified Operations Matrix</span>
         <h1 class="text-2xl font-extrabold text-white tracking-tight mt-1">Calendar Control</h1>
       </div>
       <a href="/book" target="_blank" class="bg-brand-primary hover:bg-violet-600 text-white px-4 py-2 rounded-xl text-xs font-semibold transition font-mono">
@@ -145,7 +144,7 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
               <button 
                 type="button"
                 data-date-cell={loopDateIsoKey}
-                onclick={`window.trigger_cell_allocation_drawer('${loopDateIsoKey}', '${day} {currentMonthLabel}', event)`}
+                onclick={`window.trigger_cell_allocation_drawer('${loopDateIsoKey}', '${day} ${currentMonthLabel}', event)`}
                 class={`h-16 rounded-xl border p-2 flex flex-col justify-between text-left transition relative overflow-hidden group w-full ${hasMeetings ? 'border-brand-primary bg-brand-primary/5 hover:bg-brand-primary/10' : hasBlockouts ? 'border-slate-800 bg-slate-900/20 opacity-60' : 'border-slate-800 bg-brand-canvas hover:border-slate-700'}`}
               >
                  <span class="text-xs font-mono font-bold text-slate-400 group-hover:text-white transition-colors">{day}</span>
@@ -181,11 +180,11 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
             <div class="grid grid-cols-2 gap-2">
               <div>
                 <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Start Time (GMT) *</label>
-                <input type="time" name="startTime" required value="08:00" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
+                <input type="time" name="startTime" required value="08:00" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none" />
               </div>
               <div>
                 <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">End Time (GMT) *</label>
-                <input type="time" name="endTime" required value="18:00" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
+                <input type="time" name="endTime" required value="17:00" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none" />
               </div>
             </div>
 
@@ -318,10 +317,10 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
 
       if (index > -1) {
         window.selectedDates.splice(index, 1);
-        button.classList.remove('border-brand-accent', 'bg-brand-primary/10', 'ring-1', 'ring-brand-accent');
+        button.classList.remove('ring-2', 'ring-brand-accent', 'border-brand-accent');
       } else {
         window.selectedDates.push(isoDate);
-        button.classList.add('border-brand-accent', 'bg-brand-primary/10', 'ring-1', 'ring-brand-accent');
+        button.classList.add('ring-2', 'ring-brand-accent', 'border-brand-accent');
       }
 
       const placeholder = document.getElementById('drawerSelectionPlaceholder');
@@ -352,7 +351,7 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
     window.clear_date_selection = function() {
       window.selectedDates = [];
       document.querySelectorAll('[data-date-cell]').forEach(btn => {
-        btn.classList.remove('border-brand-accent', 'bg-brand-primary/10', 'ring-1', 'ring-brand-accent');
+        btn.classList.remove('ring-2', 'ring-brand-accent', 'border-brand-accent');
       });
       document.getElementById('drawerSelectionPlaceholder').style.display = 'block';
       const actionContainer = document.getElementById('drawerActionContainer');
