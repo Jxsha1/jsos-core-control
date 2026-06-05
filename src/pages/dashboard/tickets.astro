@@ -25,11 +25,27 @@ if (Astro.request.method === "POST") {
 
       const deadline = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 
-      // Cleaned compilation query statement block free of text anomalies
+      const client = await db.prepare("SELECT company_name, email FROM clients WHERE id = ?").bind(clientId).first();
+      if (!client) throw new Error("Target account error.");
+
       await db.prepare(`
         INSERT INTO tickets (id, client_id, title, description, priority, status, sla_deadline, is_archived)
         VALUES (?, ?, ?, ?, ?, 'Open', ?, 0)
       `).bind(crypto.randomUUID(), clientId, title, description, priority, deadline).run();
+
+      const emailBinding = Astro.locals.runtime.env.EMAIL;
+      if (emailBinding) {
+        try {
+          await emailBinding.send({
+            to: [{ email: client.email, name: client.company_name }],
+            from: { email: "support@jsos.uk", name: "JS Office Solutions Support" },
+            subject: `Incident Ticket Logged: ${title}`,
+            text: `Hello,\n\nA new support incident ticket has been opened for your account.\n\nTitle: ${title}\nPriority Severity: ${priority}\nSLA Target Deadline: ${new Date(deadline).toLocaleString('en-GB')}\n\nOur system engineering queue has been assigned to track this event.`
+          });
+        } catch (mailError) {
+          console.error(mailError);
+        }
+      }
       feedbackMessage = "Success: Incident routed to support queue.";
     }
 
@@ -44,6 +60,21 @@ if (Astro.request.method === "POST") {
         UPDATE tickets SET title = ?, description = ?, priority = ?, status = ? WHERE id = ?
       `).bind(title, description, priority, status, id).run();
 
+      const ticketInfo = await db.prepare("SELECT t.title, c.email, c.company_name FROM tickets t JOIN clients c ON t.client_id = c.id WHERE t.id = ?").bind(id).first();
+      const emailBinding = Astro.locals.runtime.env.EMAIL;
+      if (emailBinding && ticketInfo) {
+        try {
+          await emailBinding.send({
+            to: [{ email: ticketInfo.email, name: ticketInfo.company_name }],
+            from: { email: "support@jsos.uk", name: "JS Office Solutions Support" },
+            subject: `Incident Status Update: ${ticketInfo.title}`,
+            text: `Hello,\n\nYour incident ticket "${ticketInfo.title}" status has been modified to: ${status}.\n\nThank you.`
+          });
+        } catch (mailError) {
+          console.error(mailError);
+        }
+      }
+
       feedbackMessage = "Success: Incident modifications committed inline.";
       return Astro.redirect(`/dashboard/tickets?tab=${activeTab}`);
     }
@@ -51,6 +82,21 @@ if (Astro.request.method === "POST") {
     if (action === "complete") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE tickets SET status = 'Completed' WHERE id = ?").bind(id).run();
+
+      const ticketInfo = await db.prepare("SELECT t.title, c.email, c.company_name FROM tickets t JOIN clients c ON t.client_id = c.id WHERE t.id = ?").bind(id).first();
+      const emailBinding = Astro.locals.runtime.env.EMAIL;
+      if (emailBinding && ticketInfo) {
+        try {
+          await emailBinding.send({
+            to: [{ email: ticketInfo.email, name: ticketInfo.company_name }],
+            from: { email: "support@jsos.uk", name: "JS Office Solutions Support" },
+            subject: `Incident Resolved: ${ticketInfo.title}`,
+            text: `Hello,\n\nYour support incident ticket "${ticketInfo.title}" has been successfully completed and resolved by our engineering queue.\n\nThank you for your patience.`
+          });
+        } catch (mailError) {
+          console.error(mailError);
+        }
+      }
       feedbackMessage = "Success: Incident shifted to Completed status tab.";
     }
 
