@@ -98,7 +98,7 @@ if (Astro.request.method === "POST") {
 let baseQuery = "SELECT o.*, c.company_name FROM opportunities o JOIN clients c ON o.client_id = c.id WHERE o.is_archived = ?";
 const queryParams = [viewMode === 'archived' ? 1 : 0];
 if (stageFilter !== 'All') {
-  baseQuery += " Huntington AND o.stage = ?";
+  baseQuery += " AND o.stage = ?";
   queryParams.push(stageFilter);
 }
 baseQuery += " ORDER BY o.gross_value DESC";
