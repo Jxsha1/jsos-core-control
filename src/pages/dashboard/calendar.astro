@@ -47,13 +47,11 @@ if (Astro.request.method === "POST") {
     if (action === "archive") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE bookings SET is_archived = 1 WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Allocation record archived.";
     }
 
     if (action === "purge") {
       const id = formData.get("itemId");
       await db.prepare("DELETE FROM bookings WHERE id = ?").bind(id).run();
-      feedbackMessage = "Success: Allocation record permanently purged.";
     }
   } catch (err: any) {
     feedbackMessage = `Scheduling Collision: ${err.message}`;
