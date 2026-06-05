@@ -7,6 +7,7 @@ let feedbackMessage = "";
 const dateNow = new Date();
 let currentYear = parseInt(Astro.url.searchParams.get('year') || "2026");
 let currentMonth = parseInt(Astro.url.searchParams.get('month') || "6");
+const editTargetId = Astro.url.searchParams.get('editId') || null;
 
 if (Astro.request.method === "POST") {
   try {
@@ -14,20 +15,24 @@ if (Astro.request.method === "POST") {
     const action = formData.get("actionType");
 
     if (action === "create_block") {
-      const dateStr = formData.get("targetDate");
-      const timeStr = formData.get("targetTime");
+      const datesStr = formData.get("targetDates");
+      const startTime = formData.get("startTime");
+      const endTime = formData.get("endTime");
       const subject = formData.get("subject") || "Administrative Focus Lockout";
       const blockStatus = formData.get("blockStatus") || "Blocked";
 
-      if (dateStr && timeStr) {
-        const startIso = new Date(`${dateStr}T${timeStr}:00Z`).toISOString();
-        const endIso = new Date(new Date(startIso).getTime() + 30 * 60 * 1000).toISOString();
+      if (datesStr && startTime && endTime) {
+        const dates = datesStr.toString().split(",");
+        for (const dateStr of dates) {
+          if (!dateStr.trim()) continue;
+          const startIso = new Date(`${dateStr}T${startTime}:00Z`).toISOString();
+          const endIso = new Date(`${dateStr}T${endTime}:00Z`).toISOString();
 
-        await db.prepare(`
-          INSERT INTO bookings (id, client_name, client_email, meeting_subject, start_time, end_time, status, is_archived)
-          VALUES (?, 'INTERNAL SYSTEM', 'ops@jsos.uk', ?, ?, ?, ?, 0)
-        `).bind(crypto.randomUUID(), subject, startIso, endIso, blockStatus).run();
-        
+          await db.prepare(`
+            INSERT INTO bookings (id, client_name, client_email, meeting_subject, start_time, end_time, status, is_archived)
+            VALUES (?, 'INTERNAL SYSTEM', 'ops@jsos.uk', ?, ?, ?, ?, 0)
+          `).bind(crypto.randomUUID(), subject, startIso, endIso, blockStatus).run();
+        }
         feedbackMessage = "Success: Operational matrix update committed live.";
       }
     }
@@ -42,11 +47,13 @@ if (Astro.request.method === "POST") {
     if (action === "archive") {
       const id = formData.get("itemId");
       await db.prepare("UPDATE bookings SET is_archived = 1 WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Allocation record archived.";
     }
 
     if (action === "purge") {
       const id = formData.get("itemId");
       await db.prepare("DELETE FROM bookings WHERE id = ?").bind(id).run();
+      feedbackMessage = "Success: Allocation record permanently purged.";
     }
   } catch (err: any) {
     feedbackMessage = `Scheduling Collision: ${err.message}`;
@@ -66,7 +73,6 @@ const dayOffset = firstDayIndex === 0 ? 6 : firstDayIndex - 1;
 
 const calendarGridDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 const paddingCells = Array.from({ length: dayOffset }, (_, i) => i);
-
 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const currentMonthLabel = monthNames[currentMonth - 1];
 
@@ -91,7 +97,7 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
         <h1 class="text-2xl font-extrabold text-white tracking-tight mt-1">Calendar Control</h1>
       </div>
       <a href="/book" target="_blank" class="bg-brand-primary hover:bg-violet-600 text-white px-4 py-2 rounded-xl text-xs font-semibold transition font-mono">
-        Open Public Portal &rarr;
+         Open Public Portal &rarr;
       </a>
     </div>
 
@@ -103,7 +109,7 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
         
         <div class="flex justify-between items-center mb-4 flex-wrap gap-2">
           <h2 class="text-base font-bold text-white font-mono uppercase tracking-wide">
-            {currentMonthLabel} {currentYear}
+             {currentMonthLabel} {currentYear}
           </h2>
           <div class="flex gap-1.5 font-mono text-xs">
             {isPastLimit ? (
@@ -137,18 +143,19 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
             const dayAllocations = bookedMeetings.filter((m: any) => m.start_time.startsWith(loopDateIsoKey));
             const hasMeetings = dayAllocations.some((m: any) => m.status === 'Scheduled');
             const hasBlockouts = dayAllocations.some((m: any) => m.status === 'Blocked' || m.status === 'Cancelled');
-
             return (
               <button 
-                onclick={`window.trigger_cell_allocation_drawer('${loopDateIsoKey}', '${day} ${currentMonthLabel}')`}
+                type="button"
+                data-date-cell={loopDateIsoKey}
+                onclick={`window.trigger_cell_allocation_drawer('${loopDateIsoKey}', '${day} {currentMonthLabel}', event)`}
                 class={`h-16 rounded-xl border p-2 flex flex-col justify-between text-left transition relative overflow-hidden group w-full ${hasMeetings ? 'border-brand-primary bg-brand-primary/5 hover:bg-brand-primary/10' : hasBlockouts ? 'border-slate-800 bg-slate-900/20 opacity-60' : 'border-slate-800 bg-brand-canvas hover:border-slate-700'}`}
               >
-                <span class="text-xs font-mono font-bold text-slate-400 group-hover:text-white transition-colors">{day}</span>
+                 <span class="text-xs font-mono font-bold text-slate-400 group-hover:text-white transition-colors">{day}</span>
                 <div class="flex gap-1">
                   {hasMeetings && <span class="h-1.5 w-1.5 rounded-full bg-brand-accent animate-pulse"></span>}
                   {hasBlockouts && <span class="h-1.5 w-1.5 rounded-full bg-slate-600"></span>}
                 </div>
-              </button>
+               </button>
             )
           })}
         </div>
@@ -157,7 +164,7 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
       <div id="allocationDrawerControl" class="bg-brand-surface/80 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4 w-full box-border">
         <div>
           <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Matrix Selection Controls</h3>
-          <p class="text-[11px] text-slate-500 mt-0.5">Click any calendar day cell node window layout directly to stage actions.</p>
+          <p class="text-[11px] text-slate-500 mt-0.5">Click calendar day cells to select multiple dates and stage actions.</p>
         </div>
 
         <div id="drawerSelectionPlaceholder" class="p-4 rounded-lg bg-brand-canvas/40 border border-dashed border-slate-800 text-slate-500 text-center text-xs font-mono">
@@ -171,11 +178,17 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
 
           <form method="POST" class="space-y-3 border-t border-slate-800/60 pt-3">
             <input type="hidden" name="actionType" value="create_block" />
-            <input type="hidden" id="submitTargetInputDate" name="targetDate" value="" />
+            <input type="hidden" id="submitTargetInputDate" name="targetDates" value="" />
             
-            <div>
-              <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Start Time (GMT) *</label>
-              <input type="time" name="targetTime" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Start Time (GMT) *</label>
+                <input type="time" name="startTime" required value="08:00" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">End Time (GMT) *</label>
+                <input type="time" name="endTime" required value="18:00" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
+              </div>
             </div>
 
             <div>
@@ -183,7 +196,7 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
               <select name="blockStatus" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white">
                 <option value="Blocked">Enforce Blockout Time</option>
                 <option value="Scheduled">Log Corporate Appointment</option>
-              </select>
+               </select>
             </div>
 
             <div>
@@ -191,12 +204,17 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
               <input type="text" name="subject" required placeholder="e.g. Server Migration Focus Window" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white" />
             </div>
 
-            <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-2 rounded-lg transition font-mono uppercase tracking-wider">
-              Enforce Action Link
-            </button>
+            <div class="flex gap-2 pt-1">
+              <button type="submit" class="flex-1 bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-2 rounded-lg transition font-mono uppercase tracking-wider">
+                Enforce Action Link
+              </button>
+              <button type="button" onclick="window.clear_date_selection()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs px-3 py-2 rounded-lg transition font-mono uppercase tracking-wider">
+                Clear
+              </button>
+            </div>
           </form>
         </div>
-      </div>
+       </div>
 
     </div>
 
@@ -226,16 +244,18 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
                 return (
                   <tr class="hover:bg-slate-900/30 transition">
                     {isItemEditing && (
-                      <form method="POST" id={rowFormId}>
+                       <form method="POST" id={rowFormId}>
                         <input type="hidden" name="actionType" value="update_status" />
                         <input type="hidden" name="itemId" value={meeting.id} />
-                      </form>
-                    )}
+                       </form>
+                     )}
 
                     <td class="px-3 py-3 font-mono text-[11px] whitespace-normal break-words">
                       <div class="font-bold text-white">{new Date(meeting.start_time).toLocaleDateString('en-GB')}</div>
-                      <div class="text-brand-accent font-semibold mt-0.5">{new Date(meeting.start_time).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'})} GMT</div>
-                    </td>
+                      <div class="text-brand-accent font-semibold mt-0.5">
+                        {new Date(meeting.start_time).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'})} - {new Date(meeting.end_time).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'})} GMT
+                      </div>
+                     </td>
 
                     <td class="px-3 py-3 whitespace-normal break-words font-medium text-slate-200">
                       {meeting.meeting_subject}
@@ -247,18 +267,18 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
                     </td>
 
                     <td class="px-3 py-3 whitespace-normal break-words">
-                      {isItemEditing ? (
+                       {isItemEditing ? (
                         <select name="status" form={rowFormId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white w-full max-w-[110px]">
                           <option value="Scheduled" selected={meeting.status === 'Scheduled'}>Scheduled</option>
                           <option value="Blocked" selected={meeting.status === 'Blocked'}>Blocked</option>
                           <option value="Cancelled" selected={meeting.status === 'Cancelled'}>Cancelled</option>
                           <option value="Completed" selected={meeting.status === 'Completed'}>Completed</option>
                         </select>
-                      ) : (
+                       ) : (
                         <span class={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border inline-block break-words ${meeting.status === 'Scheduled' ? 'bg-brand-primary/10 border-brand-primary/30 text-brand-accent' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
                           {meeting.status}
                         </span>
-                      )}
+                     )}
                     </td>
 
                     <td class="px-3 py-3 text-right font-mono text-[11px] whitespace-normal break-words">
@@ -273,14 +293,14 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
                           <form method="POST" class="inline">
                             <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={meeting.id} />
                             <button type="submit" class="text-amber-500 hover:underline">Archive</button>
-                          </form>
+                           </form>
                           <form method="POST" class="inline" onsubmit="return confirm('Purge row?');">
                             <input type="hidden" name="actionType" value="purge" /><input type="hidden" name="itemId" value={meeting.id} />
                             <button type="submit" class="text-rose-500 font-bold hover:underline">Purge</button>
                           </form>
                         </div>
                       )}
-                    </td>
+                     </td>
                   </tr>
                 );
               })
@@ -292,15 +312,55 @@ if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
   </main>
 
   <script is:inline>
-    window.trigger_cell_allocation_drawer = function(isoDate, displayLabel) {
-      document.getElementById('drawerSelectionPlaceholder').style.display = 'none';
-      
+    window.selectedDates = [];
+
+    window.trigger_cell_allocation_drawer = function(isoDate, displayLabel, event) {
+      const button = event.currentTarget;
+      const index = window.selectedDates.indexOf(isoDate);
+
+      if (index > -1) {
+        window.selectedDates.splice(index, 1);
+        button.classList.remove('border-brand-accent', 'bg-brand-primary/10', 'ring-1', 'ring-brand-accent');
+      } else {
+        window.selectedDates.push(isoDate);
+        button.classList.add('border-brand-accent', 'bg-brand-primary/10', 'ring-1', 'ring-brand-accent');
+      }
+
+      const placeholder = document.getElementById('drawerSelectionPlaceholder');
       const actionContainer = document.getElementById('drawerActionContainer');
-      actionContainer.style.display = 'block';
-      actionContainer.classList.remove('hidden');
-      
-      document.getElementById('displaySelectedTargetLabel').innerText = displayLabel;
-      document.getElementById('submitTargetInputDate').value = isoDate;
-    }
+
+      if (window.selectedDates.length === 0) {
+        placeholder.style.display = 'block';
+        actionContainer.style.display = 'none';
+        actionContainer.classList.add('hidden');
+      } else {
+        placeholder.style.display = 'none';
+        actionContainer.style.display = 'block';
+        actionContainer.classList.remove('hidden');
+        
+        window.selectedDates.sort();
+        
+        const displayContainer = document.getElementById('displaySelectedTargetLabel');
+        if (window.selectedDates.length === 1) {
+          displayContainer.innerText = displayLabel;
+        } else {
+          displayContainer.innerText = window.selectedDates.length + " Dates Selected";
+        }
+        
+        document.getElementById('submitTargetInputDate').value = window.selectedDates.join(',');
+      }
+    };
+
+    window.clear_date_selection = function() {
+      window.selectedDates = [];
+      document.querySelectorAll('[data-date-cell]').forEach(btn => {
+        btn.classList.remove('border-brand-accent', 'bg-brand-primary/10', 'ring-1', 'ring-brand-accent');
+      });
+      document.getElementById('drawerSelectionPlaceholder').style.display = 'block';
+      const actionContainer = document.getElementById('drawerActionContainer');
+      actionContainer.style.display = 'none';
+      actionContainer.classList.add('hidden');
+      document.getElementById('submitTargetInputDate').value = '';
+    };
   </script>
 </Layout>
