@@ -16,30 +16,35 @@ if (Astro.request.method === "POST") {
       const clientId = formData.get("clientId");
       const opportunityId = formData.get("opportunityId");
       const prefix = formData.get("prefix"); 
+      const lineItemsRaw = formData.get("lineItems")?.toString() || "[]";
       
-      const isFlatFee = formData.get("isFlatFee") === "1" ? 1 : 0;
-      const flatFeeDescription = formData.get("flatFeeDescription")?.toString().trim() || "";
-      const flatFeeAmount = isFlatFee ? parseFloat(formData.get("flatFeeAmount")?.toString() || "0") : 0;
-      
-      const isRecurring = formData.get("isRecurring") === "1" ? 1 : 0;
-      const recurringDescription = formData.get("recurringDescription")?.toString().trim() || "";
-      const recurringInterval = isRecurring ? formData.get("recurringInterval")?.toString() : null;
-      const recurringAmount = isRecurring ? parseFloat(formData.get("recurringAmount")?.toString() || "0") : 0;
-      
+      let lineItems = [];
+      try {
+        lineItems = JSON.parse(lineItemsRaw);
+      } catch (e) {
+        lineItems = [];
+      }
+
+      let flatFeeAmount = 0;
+      let recurringAmount = 0;
+      let isFlatFee = 0;
+      let isRecurring = 0;
+      let recurringInterval = null;
+
+      lineItems.forEach((item: any) => {
+        if (item.type === "Flat Fee") {
+          flatFeeAmount += parseFloat(item.amount || "0");
+          isFlatFee = 1;
+        } else if (item.type === "Recurring Fee") {
+          recurringAmount += parseFloat(item.amount || "0");
+          isRecurring = 1;
+          recurringInterval = item.interval || "Monthly";
+        }
+      });
+
       const totalCombinedCost = flatFeeAmount + recurringAmount;
 
-      // Programmatically piece together a structured billing breakdown layout string
-      const descriptionParts = [];
-      if (isFlatFee && flatFeeDescription) {
-        descriptionParts.push(`${flatFeeDescription} - Flat Fee - £${flatFeeAmount}`);
-      }
-      if (isRecurring && recurringDescription) {
-        descriptionParts.push(`${recurringDescription} - Recurring Fee - ${recurringInterval} - £${recurringAmount}`);
-      }
-      
-      const combinedDescription = descriptionParts.join(" | ") || "Corporate IT Services and Support Solutions";
-
-      if (clientId && prefix && totalCombinedCost > 0) {
+      if (clientId && prefix && lineItems.length > 0 && totalCombinedCost > 0) {
         const client = await db.prepare("SELECT company_name, email FROM clients WHERE id = ?").bind(clientId).first();
         if (!client) throw new Error("Target account error.");
         
@@ -62,7 +67,7 @@ if (Astro.request.method === "POST") {
             recurring_amount, amount_due, status, issued_date, due_date, is_archived
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
-          invoiceId, clientId, opportunityId || null, generatedInvoiceNumber, combinedDescription, 
+          invoiceId, clientId, opportunityId || null, generatedInvoiceNumber, lineItemsRaw, 
           isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, 
           totalCombinedCost, 'Generated', issuedStr, dueStr, 0
         ).run();
@@ -74,29 +79,14 @@ if (Astro.request.method === "POST") {
               to: [{ email: client.email, name: client.company_name }],
               from: { email: "billing@jsos.uk", name: "JS Office Solutions Billing" },
               subject: `Invoice Generated: ${generatedInvoiceNumber}`,
-              text: `Hello,\n\nA new invoice statement has been generated for your account.\n\nInvoice Number: ${generatedInvoiceNumber}\nAmount Due: £${totalCombinedCost.toLocaleString('en-GB', {minimumFractionDigits:2})}\nItem Summary: ${combinedDescription}\n\nThank you for your business.`
+              text: `Hello,\n\nA new structured invoice statement has been generated for your account.\n\nInvoice Number: ${generatedInvoiceNumber}\nAmount Due: £${totalCombinedCost.toLocaleString('en-GB', {minimumFractionDigits:2})}\n\nThank you for your business.`
             });
           } catch (mailError) {
             console.error(mailError);
           }
         }
 
-        if (opportunityId) {
-          const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(opportunityId).first();
-          const date = new Date();
-          const dd = String(date.getDate()).padStart(2, '0');
-          const mm = String(date.getMonth() + 1).padStart(2, '0');
-          const yy = String(date.getFullYear()).slice(-2);
-          const dateStr = `${dd}/${mm}/${yy}`;
-          
-          const logEntry = `Contract Won - £${totalCombinedCost.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
-          let updatedHistory = currentOpp?.price_history || "";
-          updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
-          await db.prepare(`
-            UPDATE opportunities SET stage = 'Contract Won', gross_value = ?, price_history = ? WHERE id = ?
-          `).bind(totalCombinedCost, updatedHistory, opportunityId).run();
-        }
-        feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled.`;
+        feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled safely.`;
       }
     }
 
@@ -104,51 +94,10 @@ if (Astro.request.method === "POST") {
       const id = formData.get("itemId");
       const nextStatus = formData.get("status");
       const cost = parseFloat(formData.get("amountDue")?.toString() || "0");
-      const record = await db.prepare("SELECT i.status, i.sent_date, i.paid_date, i.opportunity_id, c.email, c.company_name, i.invoice_number FROM invoices i JOIN clients c ON i.client_id = c.id WHERE i.id = ?").bind(id).first();
-      const currentTimestamp = new Date().toISOString().split('T')[0];
-      
-      let sentDate = record?.sent_date || null;
-      let paidDate = record?.paid_date || null;
-      if (nextStatus === "Sent" && record?.status !== "Sent") { sentDate = currentTimestamp;
-      }
-      if (nextStatus === "Paid" && record?.status !== "Paid") {
-        if (!sentDate) sentDate = currentTimestamp;
-        paidDate = currentTimestamp;
-      }
 
       await db.prepare(`
-        UPDATE invoices SET status = ?, amount_due = ?, sent_date = ?, paid_date = ? WHERE id = ?
-      `).bind(nextStatus, cost, sentDate, paidDate, id).run();
-
-      const emailBinding = Astro.locals.runtime.env.EMAIL;
-      if (emailBinding && record) {
-        try {
-          await emailBinding.send({
-            to: [{ email: record.email, name: record.company_name }],
-            from: { email: "billing@jsos.uk", name: "JS Office Solutions Billing" },
-            subject: `Invoice Status Update: ${record.invoice_number}`,
-            text: `Hello,\n\nYour invoice statement ${record.invoice_number} status has been updated to: ${nextStatus}.\n\nTotal Balance: £${cost.toLocaleString('en-GB', {minimumFractionDigits:2})}\n\nThank you.`
-          });
-        } catch (mailError) {
-          console.error(mailError);
-        }
-      }
-      
-      if (record?.opportunity_id) {
-        const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(record.opportunity_id).first();
-        const date = new Date();
-        const dd = String(date.getDate()).padStart(2, '0');
-        const mm = String(date.getMonth() + 1).padStart(2, '0');
-        const yy = String(date.getFullYear()).slice(-2);
-        const dateStr = `${dd}/${mm}/${yy}`;
-        
-        const logEntry = `Value Adjusted - £${cost.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
-        let updatedHistory = currentOpp?.price_history || "";
-        updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
-        await db.prepare(`
-          UPDATE opportunities SET gross_value = ?, price_history = ? WHERE id = ?
-        `).bind(cost, updatedHistory, record.opportunity_id).run();
-      }
+        UPDATE invoices SET status = ?, amount_due = ? WHERE id = ?
+      `).bind(nextStatus, cost, id).run();
 
       return Astro.redirect(`/dashboard/invoices?view=${viewMode}`);
     }
@@ -199,6 +148,7 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
         background: #ffffff !important;
         display: block !important;
         padding: 0 !important;
+        margin: 0 !important;
       }
       body > *:not(#previewModal) {
         display: none !important;
@@ -209,17 +159,20 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
         padding: 0 !important;
         margin: 0 !important;
         background: #ffffff !important;
+        width: 100% !important;
+        max-width: 100% !important;
       }
       .print-layout-target {
         display: block !important;
         background: #ffffff !important;
         color: #0f172a !important;
-        padding: 10px !important;
+        padding: 0 !important;
+        width: 100% !important;
       }
       .print-layout-target * {
         color: #0f172a !important;
         background: transparent !important;
-        border-color: #e2e8f0 !important;
+        border-color: #cbd5e1 !important;
       }
       .print-text-primary {
         color: #6d28d9 !important;
@@ -246,12 +199,12 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
       
       <div class="bg-brand-surface/80 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4 w-full box-border">
         <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Compile Financial Ledger</h3>
-        <form method="POST" class="space-y-3">
+        <form method="POST" id="mainInvoiceGenerationForm" class="space-y-3">
           <input type="hidden" name="actionType" value="create" />
           
           <div>
             <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Client *</label>
-            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white">
+            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none">
               <option value="">Select Account</option>
               {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
             </select>
@@ -259,7 +212,7 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
 
           <div>
             <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Link to Sales Project</label>
-            <select name="opportunityId" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-brand-accent font-mono">
+            <select name="opportunityId" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-brand-accent font-mono focus:outline-none">
               <option value="">Independent Milestone Item</option>
               {activeOpportunitiesList.map((o: any) => <option value={o.id}>{o.title}</option>)}
             </select>
@@ -277,31 +230,36 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
             </div>
           </div>
 
-          <div class="border border-slate-800 p-3 rounded-xl bg-brand-canvas/30 space-y-2">
-            <div class="flex justify-between items-center text-[11px]">
-              <span class="font-bold text-slate-400 uppercase">Flat Fee Structural Layer</span>
-              <input type="checkbox" name="isFlatFee" value="1" checked class="rounded border-slate-800 bg-brand-canvas text-brand-primary focus:ring-0" onchange="document.getElementById('wrapperFlatInputs').style.display = this.checked ? 'block' : 'none'" />
-            </div>
-            <div id="wrapperFlatInputs" class="space-y-2">
-              <input type="text" name="flatFeeDescription" placeholder="Description (e.g. Website Rebuild)" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white" />
-              <input type="number" name="flatFeeAmount" step="0.01" placeholder="Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white" />
-            </div>
-          </div>
-
-          <div class="border border-slate-800 p-3 rounded-xl bg-brand-canvas/30 space-y-2">
-            <div class="flex justify-between items-center text-[11px]">
-              <span class="font-bold text-slate-400 uppercase">Recurring Fee Subscription Layer</span>
-              <input type="checkbox" name="isRecurring" value="1" class="rounded border-slate-800 bg-brand-canvas text-brand-primary focus:ring-0" onchange="document.getElementById('wrapperRecInputs').style.display = this.checked ? 'block' : 'none'" />
-            </div>
-            <div id="wrapperRecInputs" class="space-y-2" style="display: none;">
-              <input type="text" name="recurringDescription" placeholder="Description (e.g. Hosting and Security)" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white" />
-              <div class="grid grid-cols-3 gap-1 text-[9px] font-mono">
-                <label class="border border-slate-800 p-1 rounded bg-brand-canvas flex items-center justify-between"><input type="radio" name="recurringInterval" value="Weekly" /> Wkly</label>
-                <label class="border border-slate-800 p-1 rounded bg-brand-canvas flex items-center justify-between"><input type="radio" name="recurringInterval" value="Monthly" checked /> Mthly</label>
-                <label class="border border-slate-800 p-1 rounded bg-brand-canvas flex items-center justify-between"><input type="radio" name="recurringInterval" value="Yearly" /> Yrly</label>
+          <div class="border border-slate-800 p-3 rounded-xl bg-brand-canvas/30 space-y-3">
+            <span class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">Work Items Manifest Builder</span>
+            
+            <div class="space-y-2">
+              <input type="text" id="tempItemDescription" placeholder="Description (e.g. Website Rebuild)" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none" />
+              
+              <div class="grid grid-cols-2 gap-2">
+                <select id="tempItemType" class="bg-brand-canvas border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" onchange="document.getElementById('tempIntervalContainer').style.display = this.value === 'Recurring Fee' ? 'block' : 'none'">
+                  <option value="Flat Fee">Flat Fee</option>
+                  <option value="Recurring Fee">Recurring Fee</option>
+                </select>
+                
+                <div id="tempIntervalContainer" style="display: none;">
+                  <select id="tempItemInterval" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none">
+                    <option value="Weekly">Weekly</option>
+                    <option value="Monthly" selected>Monthly</option>
+                    <option value="Yearly">Yearly</option>
+                  </select>
+                </div>
               </div>
-              <input type="number" name="recurringAmount" step="0.01" placeholder="Subscription Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+              
+              <input type="number" id="tempItemAmount" step="0.01" placeholder="Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none" />
+              
+              <button type="button" onclick="window.append_item_to_stack()" class="w-full bg-brand-surface border border-slate-700 hover:border-brand-accent text-brand-accent font-bold text-[10px] py-1.5 rounded-lg transition font-mono uppercase tracking-wider">
+                + Append Item Element
+              </button>
             </div>
+
+            <div id="stagedItemsManifestQueue" class="space-y-1.5 max-h-36 overflow-y-auto pt-2 border-t border-slate-800/40 empty:hidden"></div>
+            <input type="hidden" id="lineItemsSerializedInput" name="lineItems" value="[]" required />
           </div>
 
           <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-2 rounded-lg transition font-mono uppercase tracking-wider">
@@ -342,7 +300,19 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                     
                     <td class="px-3 py-3 whitespace-normal break-words">
                       <div class="font-bold text-white break-words">{invoice.company_name}</div>
-                      <div class="text-[10px] text-slate-400 break-words mt-0.5 whitespace-pre-line">{invoice.item_description}</div>
+                      <div class="text-[10px] text-slate-400 break-words mt-0.5 font-sans leading-relaxed" style="white-space: pre-line;">
+                        {(() => {
+                          if (invoice.item_description.startsWith('[')) {
+                            try {
+                              const parsed = JSON.parse(invoice.item_description);
+                              return parsed.map((i: any) => `• ${i.description} (${i.type}): £${parseFloat(i.amount).toFixed(2)}`).join('\n');
+                            } catch (e) {
+                              return invoice.item_description;
+                            }
+                          }
+                          return invoice.item_description;
+                        })()}
+                      </div>
                       {invoice.project_title && <div class="text-[9px] text-brand-accent/80 font-mono mt-0.5 break-words">Project: {invoice.project_title}</div>}
                     </td>
 
@@ -394,7 +364,11 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                         <div class="flex flex-col items-end gap-1">
                           <button 
                             type="button"
-                            onclick={`window.trigger_preview_modal('${invoice.invoice_number}', '${invoice.company_name.replace(/'/g, "\\'")}', '${invoice.item_description.replace(/'/g, "\\'")}', '${invoice.amount_due}', '${invoice.is_recurring}', '${invoice.recurring_interval}')`} 
+                            data-invoice-number={invoice.invoice_number}
+                            data-company-name={invoice.company_name}
+                            data-description={invoice.item_description}
+                            data-amount={invoice.amount_due}
+                            onclick="window.execute_inline_preview_call(this)"
                             class="text-emerald-400 hover:underline font-bold text-right"
                           >
                             Export
@@ -429,68 +403,81 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
     </div>
   </main>
 
-  <div id="previewModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 no-print">
-    <div class="bg-brand-surface border border-slate-800 rounded-2xl max-w-2xl w-full p-6 space-y-6 shadow-2xl flex flex-col max-h-[90vh] print-modal-box">
+  <div id="previewModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto no-print">
+    <div class="bg-brand-surface border border-slate-800 rounded-2xl max-w-4xl w-full p-6 shadow-2xl flex flex-col my-8 h-fit print-modal-box">
       
-      <div class="flex justify-between items-center border-b border-slate-800 pb-3 no-print">
-        <h3 class="text-sm font-mono font-bold text-white uppercase tracking-wider">Statement Ledger Preview</h3>
-        <button type="button" onclick="window.close_preview_modal()" class="text-slate-400 hover:text-white text-xs font-mono font-bold px-2 py-1 border border-slate-800 rounded-lg bg-brand-canvas">&times; Close</button>
-      </div>
-
-      <div class="flex-1 overflow-y-auto bg-white p-8 rounded-xl border border-slate-200" id="printArea">
-        <div class="print-layout-target space-y-8 text-slate-900 bg-white">
-          <div class="flex justify-between items-start border-b-2 border-slate-100 pb-6">
-            <div>
-              <img src="/jsos_logo.svg" alt="JS Office Solutions Logo" class="h-8 w-auto object-contain print-text-primary" />
-            </div>
-            <div class="text-right text-xs font-mono text-slate-600 space-y-1">
-              <div><strong>Invoice Ref:</strong> <span id="modalInvoiceNumber" class="text-slate-900 font-bold"></span></div>
-              <div><strong>Date Compiled:</strong> <span id="modalDateCompiled"></span></div>
-            </div>
-          </div>
-
-          <div class="text-2xl font-black text-slate-900 uppercase tracking-tight">Invoice Statement</div>
-
-          <div class="grid grid-cols-2 gap-8 bg-slate-50 p-4 rounded-xl border border-slate-100">
-            <div>
-              <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Debtor Entity</div>
-              <div id="modalCompanyName" class="text-sm font-bold text-slate-800"></div>
-            </div>
-            <div class="text-right">
-              <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Initial payment due</div>
-              <div id="modalPaymentDue" class="text-sm font-bold text-slate-800 text-slate-900"></div>
-            </div>
-          </div>
-
-          <table class="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr class="bg-slate-50 border-b border-slate-200">
-                <th class="p-3 font-bold text-slate-500 uppercase">Work Item Allocation Breakdown</th>
-                <th class="p-3 font-bold text-slate-500 uppercase text-right w-[150px]">Total Amount</th>
-              </tr>
-            </thead>
-            <tbody id="modalItemsTableBody">
-              </tbody>
-          </table>
-
-          <div class="flex flex-col items-end pt-2 pr-3">
-            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Balance Due</div>
-            <div id="modalTotalBalance" class="text-xl font-black text-slate-900 mt-1 print-text-primary"></div>
-          </div>
-
-          <div id="modalSubscriptionNotice" class="hidden text-[11px] font-semibold text-slate-600 bg-slate-50 border border-slate-200 p-3 rounded-lg font-sans">
-            Fee must be paid by the 27th of every month until subscription is cancelled.
-          </div>
-
-          <div class="pt-8 border-t border-slate-100 text-[9px] font-medium text-slate-400 text-center leading-relaxed">
-            Regulated under England & Wales Jurisdiction. Data Protection Officer Audit Verification: Joshua Stevens. UK GDPR Compliant Asset Ledger.
-          </div>
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3 mb-4 no-print">
+        <h3 class="text-sm font-mono font-bold text-white uppercase tracking-wider">A4 Statement Print Engine Viewport</h3>
+        <div class="flex items-center gap-3">
+          <button type="button" onclick="window.print()" class="bg-brand-primary hover:bg-violet-600 text-white px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition uppercase tracking-wider">Export As PDF</button>
+          <button type="button" onclick="window.close_preview_modal()" class="text-slate-400 hover:text-white text-xs font-mono font-bold px-2 py-1 border border-slate-800 rounded-lg bg-brand-canvas">&times; Close</button>
         </div>
       </div>
 
-      <div class="flex justify-end gap-3 border-t border-slate-800 pt-4 no-print">
-        <button type="button" onclick="window.close_preview_modal()" class="bg-brand-canvas hover:bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl text-xs font-mono font-bold text-slate-400 hover:text-white transition">Cancel Workspace Preview</button>
-        <button type="button" onclick="window.print()" class="bg-brand-primary hover:bg-violet-600 text-white px-5 py-2 rounded-xl text-xs font-mono font-bold transition uppercase tracking-wider">Execute Print Subsystem</button>
+      <div class="w-full flex justify-center bg-slate-900/40 p-4 rounded-xl border border-slate-800/60 overflow-x-auto no-print">
+        <div class="bg-white text-slate-900 p-[21mm] box-border shadow-2xl rounded-sm w-[210mm] min-h-[297mm] flex flex-col justify-between" id="printArea">
+          <div class="print-layout-target space-y-8 w-full bg-white text-slate-900">
+            
+            <div class="text-center space-y-3 border-b-2 border-slate-100 pb-6">
+              <h2 class="text-2xl font-black tracking-tight text-slate-900 uppercase print-text-primary">JS Office Solutions</h2>
+              <div class="flex justify-center">
+                <img src="/jsos_logo.svg" alt="JS Office Solutions Logo" class="h-8 w-auto object-contain" />
+              </div>
+              <div class="text-[10px] font-mono text-slate-500 pt-1 flex justify-center gap-5 uppercase tracking-wider">
+                <div><strong>Invoice Ref:</strong> <span id="modalInvoiceNumber" class="text-slate-900 font-bold"></span></div>
+                <div><strong>Date Compiled:</strong> <span id="modalDateCompiled"></span></div>
+              </div>
+            </div>
+
+            <div class="text-xl font-black text-slate-900 uppercase tracking-tight">Invoice Statement</div>
+
+            <div class="grid grid-cols-2 gap-8 bg-slate-50 p-4 rounded-xl border border-slate-100">
+              <div>
+                <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Debtor Entity</div>
+                <div id="modalCompanyName" class="text-sm font-bold text-slate-800"></div>
+              </div>
+              <div class="text-right">
+                <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Initial payment due</div>
+                <div id="modalPaymentDue" class="text-sm font-bold text-slate-900"></div>
+              </div>
+            </div>
+
+            <table class="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr class="bg-slate-50 border-b border-slate-200">
+                  <th class="p-3 font-bold text-slate-500 uppercase">Work Item Allocation Breakdown</th>
+                  <th class="p-3 font-bold text-slate-500 uppercase text-right w-[140px]">Total Amount</th>
+                </tr>
+              </thead>
+              <tbody id="modalItemsTableBody">
+                </tbody>
+            </table>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-slate-100">
+              <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                <span class="text-[9px] font-bold text-slate-400 uppercase tracking-wide block">Payable Now</span>
+                <div id="modalBreakdownPayableNow" class="text-base font-black text-slate-900 mt-1">£0.00</div>
+              </div>
+              <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 text-right sm:text-left">
+                <span class="text-[9px] font-bold text-slate-400 uppercase tracking-wide block">Recurring Fee Schedule</span>
+                <div id="modalBreakdownRecurring" class="text-base font-black text-brand-primary mt-1 print-text-primary">£0.00</div>
+                <div id="modalSubscriptionNotice" class="hidden text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-tight">
+                  Fee must be paid on or before the 27th of every month until the subscription is cancelled.
+                </div>
+              </div>
+            </div>
+
+            <div class="flex flex-col items-end pt-4 pr-2">
+              <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Combined Balance</div>
+              <div id="modalTotalBalance" class="text-xl font-black text-slate-900 mt-0.5 print-text-primary"></div>
+            </div>
+
+          </div>
+
+          <div class="pt-6 border-t border-slate-100 text-[9px] font-medium text-slate-400 text-center leading-relaxed w-full">
+            Regulated under England & Wales Jurisdiction. Data Protection Officer Audit Verification: Joshua Stevens. UK GDPR Compliant Asset Ledger.
+          </div>
+        </div>
       </div>
 
     </div>
@@ -498,57 +485,157 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
 </Layout>
 
 <script is:inline>
-  window.trigger_preview_modal = function (invoiceNumber, companyName, itemDescription, amountDue, isRecurring, recurringInterval) {
-    const formattedCost = '£' + parseFloat(amountDue).toLocaleString('en-GB', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
+  window.stagedInvoiceItems = [];
+
+  window.append_item_to_stack = function () {
+    const descEl = document.getElementById('tempItemDescription');
+    const typeEl = document.getElementById('tempItemType');
+    const intervalEl = document.getElementById('tempItemInterval');
+    const amountEl = document.getElementById('tempItemAmount');
+
+    const descValue = descEl.value.trim();
+    const typeValue = typeEl.value;
+    const intervalValue = typeValue === 'Recurring Fee' ? intervalEl.value : null;
+    const amountValue = parseFloat(amountEl.value || '0');
+
+    if (!descValue || amountValue <= 0) {
+      alert('Please specify a valid item description and monetary value.');
+      return;
+    }
+
+    const itemNode = {
+      id: Math.random().toString(36).substring(2, 11),
+      description: descValue,
+      type: typeValue,
+      interval: intervalValue,
+      amount: amountValue
+    };
+
+    window.stagedInvoiceItems.push(itemNode);
+    window.synchronise_builder_state();
+
+    descEl.value = '';
+    amountEl.value = '';
+  };
+
+  window.remove_staged_node = function (nodeId) {
+    window.stagedInvoiceItems = window.stagedInvoiceItems.filter(function (item) {
+      return item.id !== nodeId;
+    });
+    window.synchronise_builder_state();
+  };
+
+  window.synchronise_builder_state = function () {
+    const displayQueue = document.getElementById('stagedItemsManifestQueue');
+    const serializedInput = document.getElementById('lineItemsSerializedInput');
+    
+    displayQueue.innerHTML = '';
+    
+    window.stagedInvoiceItems.forEach(function (item) {
+      const container = document.createElement('div');
+      container.className = 'flex justify-between items-center bg-brand-canvas p-2 rounded border border-slate-800 text-[11px]';
+      
+      const detailsSpan = document.createElement('span');
+      detailsSpan.className = 'text-slate-300 truncate max-w-[170px]';
+      detailsSpan.innerText = item.description + ' (' + (item.interval || 'Flat') + ': £' + item.amount.toFixed(2) + ')';
+      
+      const eraseButton = document.createElement('button');
+      eraseButton.type = 'button';
+      eraseButton.className = 'text-rose-400 hover:text-rose-300 font-bold font-mono px-1';
+      eraseButton.innerHTML = '&times;';
+      eraseButton.onclick = function () {
+        window.remove_staged_node(item.id);
+      };
+      
+      container.appendChild(detailsSpan);
+      container.appendChild(eraseButton);
+      displayQueue.appendChild(container);
     });
 
-    // Populate profile criteria variables
+    serializedInput.value = JSON.stringify(window.stagedInvoiceItems);
+  };
+
+  window.execute_inline_preview_call = function (buttonElement) {
+    const invoiceNumber = buttonElement.getAttribute('data-invoice-number');
+    const companyName = buttonElement.getAttribute('data-company-name');
+    const descriptionRaw = buttonElement.getAttribute('data-description');
+    const amountDue = buttonElement.getAttribute('data-amount');
+    
+    window.trigger_preview_modal(invoiceNumber, companyName, descriptionRaw, amountDue);
+  };
+
+  window.trigger_preview_modal = function (invoiceNumber, companyName, itemDescription, amountDue) {
     document.getElementById('modalInvoiceNumber').innerText = invoiceNumber;
     document.getElementById('modalCompanyName').innerText = companyName;
-    document.getElementById('modalTotalBalance').innerText = formattedCost;
     document.getElementById('modalDateCompiled').innerText = new Date().toLocaleDateString('en-GB');
 
-    // Establish initial payment date precisely one week post compilation
-    const targetDueDate = new Date();
-    targetDueDate.setDate(targetDueDate.getDate() + 7);
-    document.getElementById('modalPaymentDue').innerText = targetDueDate.toLocaleDateString('en-GB');
+    const executionDeadline = new Date();
+    executionDeadline.setDate(executionDeadline.getDate() + 7);
+    document.getElementById('modalPaymentDue').innerText = executionDeadline.toLocaleDateString('en-GB');
 
-    // Split items if combined with a pipe separator to populate clean rows
     const tableBody = document.getElementById('modalItemsTableBody');
     tableBody.innerHTML = '';
-    
-    const individualItems = itemDescription.split(' | ');
-    individualItems.forEach(function(item) {
-      if (!item.trim()) return;
-      
+
+    let structuralItems = [];
+    if (itemDescription.startsWith('[')) {
+      try {
+        structuralItems = JSON.parse(itemDescription);
+      } catch (e) {
+        structuralItems = [{ description: itemDescription, type: 'Flat Fee', amount: parseFloat(amountDue) }];
+      }
+    } else {
+      const components = itemDescription.split(' | ');
+      components.forEach(function (segment) {
+        if (!segment.trim()) return;
+        const matches = segment.match(/£([\d.]+)/);
+        const derivedCost = matches ? parseFloat(matches[1]) : 0;
+        const checkRecurring = segment.includes('Recurring');
+        structuralItems.push({
+          description: segment,
+          type: checkRecurring ? 'Recurring Fee' : 'Flat Fee',
+          interval: checkRecurring ? 'Monthly' : null,
+          amount: derivedCost
+        });
+      });
+    }
+
+    let dynamicPayableNowTotal = 0;
+    let dynamicRecurringMonthlyTotal = 0;
+    let containsMonthlyRecurring = false;
+
+    structuralItems.forEach(function (item) {
       const row = document.createElement('tr');
       row.className = 'border-b border-slate-100';
+
+      const cellDescription = document.createElement('td');
+      cellDescription.className = 'p-3 text-slate-700 font-medium whitespace-normal';
       
-      const itemCell = document.createElement('td');
-      itemCell.className = 'p-3 text-slate-700 font-medium whitespace-pre-line';
-      itemCell.innerText = item;
-      
-      const costCell = document.createElement('td');
-      costCell.className = 'p-3 text-right font-bold text-slate-900 w-[150px]';
-      
-      // Match out specific amounts within item descriptions for cleaner alignment
-      const costMatch = item.match(/£([\d.]+)/);
-      if (costMatch && costMatch[1]) {
-        costCell.innerText = '£' + parseFloat(costMatch[1]).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+      if (item.type === 'Recurring Fee') {
+        cellDescription.innerText = item.description + ' (Recurring Fee - ' + (item.interval || 'Monthly') + ')';
+        dynamicRecurringMonthlyTotal += item.amount;
+        if (item.interval === 'Monthly') {
+          containsMonthlyRecurring = true;
+        }
       } else {
-        costCell.innerText = 'Included';
+        cellDescription.innerText = item.description + ' (Flat Fee)';
+        dynamicPayableNowTotal += item.amount;
       }
-      
-      row.appendChild(itemCell);
-      row.appendChild(costCell);
+
+      const cellCost = document.createElement('td');
+      cellCost.className = 'p-3 text-right font-bold text-slate-900 w-[140px]';
+      cellCost.innerText = '£' + item.amount.toLocaleString('en-GB', { minimumFractionDigits: 2 });
+
+      row.appendChild(cellDescription);
+      row.appendChild(cellCost);
       tableBody.appendChild(row);
     });
 
-    // Conditionally print recurring contract terms notice blocks
+    document.getElementById('modalBreakdownPayableNow').innerText = '£' + dynamicPayableNowTotal.toLocaleString('en-GB', { minimumFractionDigits: 2 });
+    document.getElementById('modalBreakdownRecurring').innerText = '£' + dynamicRecurringMonthlyTotal.toLocaleString('en-GB', { minimumFractionDigits: 2 });
+    document.getElementById('modalTotalBalance').innerText = '£' + (dynamicPayableNowTotal + dynamicRecurringMonthlyTotal).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+
     const subNotice = document.getElementById('modalSubscriptionNotice');
-    if (parseInt(isRecurring) === 1 && recurringInterval === 'Monthly') {
+    if (containsMonthlyRecurring) {
       subNotice.classList.remove('hidden');
     } else {
       subNotice.classList.add('hidden');
