@@ -1,382 +1,3 @@
----
-import Layout from '../../layouts/Layout.astro';
-
-const db = Astro.locals.runtime.env.DB;
-const r2 = Astro.locals.runtime.env.INVOICE_VAULT;
-let feedbackMessage = "";
-const viewMode = Astro.url.searchParams.get('view') || 'active';
-const editTargetId = Astro.url.searchParams.get('editId') || null;
-
-if (Astro.request.method === "POST") {
-  try {
-    const formData = await Astro.request.formData();
-    const action = formData.get("actionType");
-
-    if (action === "create") {
-      const clientId = formData.get("clientId");
-      const opportunityId = formData.get("opportunityId");
-      const prefix = formData.get("prefix"); 
-      const description = formData.get("itemDescription");
-      
-      const isFlatFee = formData.get("isFlatFee") === "1" ? 1 : 0;
-      const flatFeeAmount = isFlatFee ? parseFloat(formData.get("flatFeeAmount")?.toString() || "0") : 0;
-      const isRecurring = formData.get("isRecurring") === "1" ? 1 : 0;
-      const recurringInterval = isRecurring ? formData.get("recurringInterval")?.toString() : null;
-      const recurringAmount = isRecurring ? parseFloat(formData.get("recurringAmount")?.toString() || "0") : 0;
-      const totalCombinedCost = flatFeeAmount + recurringAmount;
-
-      if (clientId && prefix && description && totalCombinedCost > 0) {
-        const client = await db.prepare("SELECT company_name, email FROM clients WHERE id = ?").bind(clientId).first();
-        if (!client) throw new Error("Target account error.");
-        
-        const name = client.company_name.trim();
-        const words = name.split(/\s+/);
-        let abbreviation = (words.length === 1) ? name.substring(0, 4).toUpperCase() : words.map((w: string) => w[0]).join("").toUpperCase();
-        const counterScan = await db.prepare("SELECT COUNT(*) as count FROM invoices").first();
-        const nextSequenceId = (counterScan?.count || 0) + 1;
-        const generatedInvoiceNumber = `${prefix}-${abbreviation}-${nextSequenceId}`;
-
-        const issuedStr = new Date().toISOString().split('T')[0];
-        const due = new Date(); due.setDate(due.getDate() + 14);
-        const dueStr = due.toISOString().split('T')[0];
-        const invoiceId = crypto.randomUUID();
-
-        await db.prepare(`
-          INSERT INTO invoices (
-            id, client_id, opportunity_id, invoice_number, item_description, 
-            is_flat_fee, flat_fee_amount, is_recurring, recurring_interval, 
-            recurring_amount, amount_due, status, issued_date, due_date, is_archived
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-          invoiceId, clientId, opportunityId || null, generatedInvoiceNumber, description, 
-          isFlatFee, flatFeeAmount, isRecurring, recurringInterval, recurringAmount, 
-          totalCombinedCost, 'Generated', issuedStr, dueStr, 0
-        ).run();
-
-        const emailBinding = Astro.locals.runtime.env.EMAIL;
-        if (emailBinding) {
-          try {
-            await emailBinding.send({
-              to: [{ email: client.email, name: client.company_name }],
-              from: { email: "billing@jsos.uk", name: "JS Office Solutions Billing" },
-              subject: `Invoice Generated: ${generatedInvoiceNumber}`,
-              text: `Hello,\n\nA new invoice statement has been generated for your account.\n\nInvoice Number: ${generatedInvoiceNumber}\nAmount Due: £${totalCombinedCost.toLocaleString('en-GB', {minimumFractionDigits:2})}\nItem Summary: ${description}\n\nThank you for your business.`
-            });
-          } catch (mailError) {
-            console.error(mailError);
-          }
-        }
-
-        if (opportunityId) {
-          const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(opportunityId).first();
-          const date = new Date();
-          const dd = String(date.getDate()).padStart(2, '0');
-          const mm = String(date.getMonth() + 1).padStart(2, '0');
-          const yy = String(date.getFullYear()).slice(-2);
-          const dateStr = `${dd}/${mm}/${yy}`;
-          
-          const logEntry = `Contract Won - £${totalCombinedCost.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
-          let updatedHistory = currentOpp?.price_history || "";
-          updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
-          await db.prepare(`
-            UPDATE opportunities SET stage = 'Contract Won', gross_value = ?, price_history = ? WHERE id = ?
-          `).bind(totalCombinedCost, updatedHistory, opportunityId).run();
-        }
-        feedbackMessage = `Success: Invoice ${generatedInvoiceNumber} compiled.`;
-      }
-    }
-
-    if (action === "update") {
-      const id = formData.get("itemId");
-      const nextStatus = formData.get("status");
-      const cost = parseFloat(formData.get("amountDue")?.toString() || "0");
-      const record = await db.prepare("SELECT i.status, i.sent_date, i.paid_date, i.opportunity_id, c.email, c.company_name, i.invoice_number FROM invoices i JOIN clients c ON i.client_id = c.id WHERE i.id = ?").bind(id).first();
-      const currentTimestamp = new Date().toISOString().split('T')[0];
-      
-      let sentDate = record?.sent_date || null;
-      let paidDate = record?.paid_date || null;
-      if (nextStatus === "Sent" && record?.status !== "Sent") { sentDate = currentTimestamp;
-      }
-      if (nextStatus === "Paid" && record?.status !== "Paid") {
-        if (!sentDate) sentDate = currentTimestamp;
-        paidDate = currentTimestamp;
-      }
-
-      await db.prepare(`
-        UPDATE invoices SET status = ?, amount_due = ?, sent_date = ?, paid_date = ? WHERE id = ?
-      `).bind(nextStatus, cost, sentDate, paidDate, id).run();
-
-      const emailBinding = Astro.locals.runtime.env.EMAIL;
-      if (emailBinding && record) {
-        try {
-          await emailBinding.send({
-            to: [{ email: record.email, name: record.company_name }],
-            from: { email: "billing@jsos.uk", name: "JS Office Solutions Billing" },
-            subject: `Invoice Status Update: ${record.invoice_number}`,
-            text: `Hello,\n\nYour invoice statement ${record.invoice_number} status has been updated to: ${nextStatus}.\n\nTotal Balance: £${cost.toLocaleString('en-GB', {minimumFractionDigits:2})}\n\nThank you.`
-          });
-        } catch (mailError) {
-          console.error(mailError);
-        }
-      }
-      
-      if (record?.opportunity_id) {
-        const currentOpp = await db.prepare("SELECT price_history FROM opportunities WHERE id = ?").bind(record.opportunity_id).first();
-        const date = new Date();
-        const dd = String(date.getDate()).padStart(2, '0');
-        const mm = String(date.getMonth() + 1).padStart(2, '0');
-        const yy = String(date.getFullYear()).slice(-2);
-        const dateStr = `${dd}/${mm}/${yy}`;
-        
-        const logEntry = `Value Adjusted - £${cost.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
-        let updatedHistory = currentOpp?.price_history || "";
-        updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
-        await db.prepare(`
-          UPDATE opportunities SET gross_value = ?, price_history = ? WHERE id = ?
-        `).bind(cost, updatedHistory, record.opportunity_id).run();
-      }
-
-      return Astro.redirect(`/dashboard/invoices?view=${viewMode}`);
-    }
-
-    if (action === "archive") {
-      const id = formData.get("itemId");
-      await db.prepare("UPDATE invoices SET is_archived = 1 WHERE id = ?").bind(id).run();
-    }
-
-    if (action === "restore") {
-      const id = formData.get("itemId");
-      await db.prepare("UPDATE invoices SET is_archived = 0 WHERE id = ?").bind(id).run();
-    }
-
-    if (action === "purge") {
-      const id = formData.get("itemId");
-      await db.prepare("DELETE FROM invoices WHERE id = ?").bind(id).run();
-    }
-  } catch (err: any) {
-    feedbackMessage = `Exception Event: ${err.message}`;
-  }
-}
-
-const invoicesList = (await db.prepare(`
-  SELECT i.*, c.company_name, o.title as project_title FROM invoices i 
-  JOIN clients c ON i.client_id = c.id 
-  LEFT JOIN opportunities o ON i.opportunity_id = o.id
-  WHERE i.is_archived = ? ORDER BY i.issued_date DESC
-`).bind(viewMode === 'archived' ? 1 : 0).all()).results || [];
-
-const clientsList = (await db.prepare("SELECT id, company_name FROM clients WHERE is_archived = 0 ORDER BY company_name ASC").all()).results || [];
-const activeOpportunitiesList = (await db.prepare("SELECT id, title FROM opportunities WHERE is_archived = 0 AND stage != 'Contract Won'").all()).results || [];
-const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key: 'Sent', label: 'Sent' }, { key: 'Paid', label: 'Paid' }];
----
-
-<Layout title="Invoice Generator & Vault Ledger | JSOS Core Control">
-  <main class="max-w-7xl mx-auto p-4 md:p-6 space-y-6 w-full box-border overflow-hidden no-print">
-    
-    <div class="flex justify-between items-end border-b border-slate-800 pb-4 flex-wrap gap-4">
-      <div>
-        <span class="text-xs font-bold text-brand-accent tracking-widest uppercase font-mono">Automated Ledger</span>
-        <h1 class="text-2xl font-extrabold text-white tracking-tight mt-1">Invoice Generation</h1>
-      </div>
-      <div class="flex gap-2 font-mono text-xs">
-        <a href="?view=active" class={`px-3 py-1.5 rounded-lg border transition ${viewMode === 'active' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Active</a>
-        <a href="?view=archived" class={`px-3 py-1.5 rounded-lg border transition ${viewMode === 'archived' ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-surface text-slate-400 border-slate-800'}`}>Archived</a>
-      </div>
-    </div>
-
-    {feedbackMessage && <div class="p-4 bg-brand-surface border border-brand-primary/30 rounded-xl text-xs font-mono text-brand-accent">{feedbackMessage}</div>}
-
-    <div class="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start w-full">
-      
-      <div class="bg-brand-surface/80 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4 w-full box-border">
-        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Compile Financial Ledger</h3>
-        <form method="POST" class="space-y-3">
-          <input type="hidden" name="actionType" value="create" />
-          
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Client *</label>
-            <select name="clientId" required class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white">
-              <option value="">Select Account</option>
-              {clientsList.map((c: any) => <option value={c.id}>{c.company_name}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Link to Sales Project</label>
-            <select name="opportunityId" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-brand-accent font-mono">
-              <option value="">Independent Milestone Item</option>
-              {activeOpportunitiesList.map((o: any) => <option value={o.id}>{o.title}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Corporate Prefix Code *</label>
-            <div class="grid grid-cols-2 gap-2">
-              <label class="border border-slate-800 bg-brand-canvas p-2 rounded-xl flex items-center justify-between text-xs cursor-pointer">
-                <span>JLDS</span> <input type="radio" name="prefix" value="JLDS" checked required />
-              </label>
-              <label class="border border-slate-800 bg-brand-canvas p-2 rounded-xl flex items-center justify-between text-xs cursor-pointer">
-                <span>JJS</span> <input type="radio" name="prefix" value="JJS" />
-              </label>
-            </div>
-          </div>
-
-          <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Work Item Description *</label>
-            <input type="text" name="itemDescription" required placeholder="Managed Platform Engineering" class="w-full bg-brand-canvas border border-slate-800 rounded-lg px-3 py-2 text-xs text-white" />
-          </div>
-
-          <div class="border border-slate-800 p-2.5 rounded-lg bg-brand-canvas/30 space-y-2">
-            <div class="flex justify-between items-center text-[11px]">
-              <span class="font-bold text-slate-400 uppercase">Include Flat Fee?</span>
-              <div class="flex gap-2">
-                <label><input type="radio" name="isFlatFee" value="1" checked onchange="document.getElementById('wrapperFlat').style.display='block'" /> Yes</label>
-                <label><input type="radio" name="isFlatFee" value="0" onchange="document.getElementById('wrapperFlat').style.display='none'; document.getElementById('inputFlatPrice').value='0'" /> No</label>
-              </div>
-            </div>
-            <div id="wrapperFlat"><input type="number" id="inputFlatPrice" name="flatFeeAmount" step="0.01" placeholder="Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" /></div>
-          </div>
-
-          <div class="border border-slate-800 p-2.5 rounded-lg bg-brand-canvas/30 space-y-2">
-            <div class="flex justify-between items-center text-[11px]">
-              <span class="font-bold text-slate-400 uppercase">Include Recurring Fee?</span>
-              <div class="flex gap-2">
-                <label><input type="radio" name="isRecurring" value="1" onchange="document.getElementById('wrapperRec').style.display='block'" /> Yes</label>
-                <label><input type="radio" name="isRecurring" value="0" checked onchange="document.getElementById('wrapperRec').style.display='none'; document.getElementById('inputRecPrice').value='0'" /> No</label>
-              </div>
-            </div>
-            <div id="wrapperRec" class="space-y-1.5 hidden">
-              <div class="grid grid-cols-3 gap-1 text-[9px] font-mono">
-                <label class="border border-slate-800 p-1 rounded bg-brand-canvas flex items-center justify-between"><input type="radio" name="recurringInterval" value="Weekly" checked /> Wkly</label>
-                <label class="border border-slate-800 p-1 rounded bg-brand-canvas flex items-center justify-between"><input type="radio" name="recurringInterval" value="Monthly" /> Mthly</label>
-                <label class="border border-slate-800 p-1 rounded bg-brand-canvas flex items-center justify-between"><input type="radio" name="recurringInterval" value="Yearly" /> Yrly</label>
-              </div>
-              <input type="number" id="inputRecPrice" name="recurringAmount" step="0.01" placeholder="Amount (£)" class="w-full bg-brand-canvas border border-slate-800 rounded px-2 py-1 text-xs text-white" />
-            </div>
-          </div>
-
-          <button type="submit" class="w-full bg-brand-primary hover:bg-violet-600 text-white font-bold text-xs py-2 rounded-lg transition font-mono uppercase tracking-wider">
-            Execute Statement Log
-          </button>
-        </form>
-      </div>
-
-      <div class="xl:col-span-3 space-y-4 w-full overflow-hidden">
-        <div class="border border-slate-800 rounded-xl bg-brand-surface/30 shadow-2xl w-full overflow-hidden">
-          <table class="w-full min-w-full divide-y divide-slate-800 text-left table-fixed border-collapse">
-            <thead class="bg-brand-surface text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
-              <tr>
-                <th class="px-3 py-3 w-[15%]">Reference ID</th>
-                <th class="px-3 py-3 w-[25%]">Debtor Entity</th>
-                <th class="px-3 py-3 w-[18%]">Fee Configuration</th>
-                <th class="px-3 py-3 w-[27%]">Lifecycle Audit Pipeline</th>
-                <th class="px-3 py-3 text-right w-[15%]">Controls</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800/60 text-xs text-slate-300">
-              {invoicesList.map((invoice: any) => {
-                const isEditing = editTargetId === invoice.id;
-                const formId = `form-invoice-row-${invoice.id}`;
-
-                return (
-                  <tr class="hover:bg-slate-900/30 transition">
-                    {isEditing && (
-                      <form method="POST" id={formId}>
-                        <input type="hidden" name="actionType" value="update" />
-                        <input type="hidden" name="itemId" value={invoice.id} />
-                      </form>
-                    )}
-
-                    <td class="px-3 py-3 font-mono font-bold text-brand-accent tracking-tight whitespace-normal break-all">
-                      {invoice.invoice_number}
-                    </td>
-                    
-                    <td class="px-3 py-3 whitespace-normal break-words">
-                      <div class="font-bold text-white break-words">{invoice.company_name}</div>
-                      <div class="text-[10px] text-slate-400 break-words mt-0.5">{invoice.item_description}</div>
-                      {invoice.project_title && <div class="text-[9px] text-brand-accent/80 font-mono mt-0.5 break-words">Project: {invoice.project_title}</div>}
-                    </td>
-
-                    <td class="px-3 py-3 font-mono text-[11px] whitespace-normal break-words">
-                      {isEditing ? (
-                        <input type="number" name="amountDue" step="0.01" value={invoice.amount_due} form={formId} required class="w-full max-w-[90px] bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white" />
-                      ) : (
-                        <div class="space-y-0.5">
-                          <div class="font-bold text-white">£{invoice.amount_due.toLocaleString('en-GB', {minimumFractionDigits:2})}</div>
-                          <div class="text-[9px] text-slate-500 break-words">F: £{invoice.flat_fee_amount} | R: £{invoice.recurring_amount}</div>
-                        </div>
-                      )}
-                    </td>
-
-                    <td class="px-3 py-3 whitespace-normal break-words">
-                      {isEditing ? (
-                        <select name="status" form={formId} class="bg-brand-canvas border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white w-full max-w-[120px]">
-                          <option value="Generated" selected={invoice.status === 'Generated'}>Generated</option>
-                          <option value="Sent" selected={invoice.status === 'Sent'}>Sent</option>
-                          <option value="Paid" selected={invoice.status === 'Paid'}>Paid</option>
-                        </select>
-                      ) : (
-                        <div class="space-y-1">
-                          <div class="flex flex-wrap items-center gap-0.5 font-mono text-[8px] font-bold whitespace-normal">
-                            {visualProgressionSteps.map((step, idx) => {
-                              const isCurrent = invoice.status === step.key;
-                              const isPast = visualProgressionSteps.findIndex(s => s.key === invoice.status) >= idx;
-                              return (
-                                <>
-                                  <span class={`px-1 py-0.5 rounded border transition-colors ${isCurrent ? 'bg-brand-primary text-white border-brand-primary' : 'bg-brand-primary/10 text-brand-accent border-brand-primary/20'}`}>{step.label}</span>
-                                  {idx < 2 && <span class="text-slate-700">&rarr;</span>}
-                                </>
-                              );
-                            })}
-                          </div>
-                          <div class="text-[9px] font-mono text-slate-500 leading-none space-y-0.5 whitespace-normal break-words">
-                            {invoice.sent_date && <div>• Sent: {invoice.sent_date}</div>}
-                            {invoice.paid_date && <div>• Paid: <span class="text-emerald-400 font-bold">{invoice.paid_date}</span></div>}
-                          </div>
-                        </div>
-                      )}
-                    </td>
-
-                    <td class="px-3 py-3 text-right font-mono text-[11px] whitespace-normal break-words">
-                      {isEditing ? (
-                        <div class="flex flex-col items-end gap-1">
-                          <button type="submit" form={formId} class="text-emerald-400 font-bold hover:underline">Save</button>
-                          <a href="?" class="text-slate-500 hover:underline">Cancel</a>
-                        </div>
-                      ) : viewMode === 'active' ? (
-                        <div class="flex flex-col items-end gap-1">
-                          <button onclick={`window.print_target_statement('${invoice.invoice_number}', '${invoice.company_name.replace(/'/g, "\\'")}', '${invoice.item_description.replace(/'/g, "\\'")}', '${invoice.amount_due}')`} class="text-emerald-400 hover:underline font-bold text-right">Export</button>
-                          <a href={`?editId=${invoice.id}`} class="text-brand-accent hover:underline text-right">Edit</a>
-                          <form method="POST" class="inline text-right">
-                            <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={invoice.id} />
-                            <button type="submit" class="text-amber-500 hover:underline">Archive</button>
-                          </form>
-                        </div>
-                      ) : (
-                        <div class="flex flex-col items-end gap-1">
-                          <form method="POST" class="inline">
-                            <input type="hidden" name="actionType" value="restore" /><input type="hidden" name="itemId" value={invoice.id} />
-                            <button type="submit" class="text-emerald-400 hover:underline">Restore</button>
-                          </form>
-                          <form method="POST" class="inline" onsubmit="return confirm('Wipe element?');">
-                            <input type="hidden" name="actionType" value="purge" /><input type="hidden" name="itemId" value={invoice.id} />
-                            <button type="submit" class="text-rose-500 font-bold hover:underline">Purge</button>
-                          </form>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-    </div>
-  </main>
-</Layout>
-
 <script is:inline>
   window.print_target_statement = function (invoiceNumber, companyName, itemDescription, amountDue) {
     const printWindow = window.open('', '_blank', 'width=850,height=1100');
@@ -395,7 +16,7 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
       <html lang="en-GB">
       <head>
         <meta charset="UTF-8">
-        <title>Invoice Statement - \${invoiceNumber}</title>
+        <title>Invoice Statement - ${invoiceNumber}</title>
         <style>
           body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #0f172a; padding: 50px; line-height: 1.6; background-color: #ffffff; }
           .container { max-width: 750px; margin: 0 auto; }
@@ -403,14 +24,14 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
           .brand-title { font-size: 26px; font-weight: 800; color: #6d28d9; text-transform: uppercase; letter-spacing: -0.025em; }
           .brand-subtitle { font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 2px; }
           .meta-box { text-align: right; font-size: 13px; color: #475569; }
-          .invoice-heading { font-size: 32px; font-weight: 900; color: #0f172a; tracking-tight: -0.05em; margin-bottom: 30px; text-transform: uppercase; }
+          .invoice-heading { font-size: 32px; font-weight: 900; color: #0f172a; margin-bottom: 30px; text-transform: uppercase; }
           .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 50px; }
           .section-caption { font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
           .entity-name { font-size: 16px; font-weight: 700; color: #1e293b; }
           .ledger-table { width: 100%; border-collapse: collapse; margin-bottom: 40px; text-align: left; }
           .ledger-table th { background-color: #f8fafc; padding: 14px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0; }
           .ledger-table td { padding: 16px; font-size: 14px; color: #334155; border-bottom: 1px solid #f1f5f9; }
-          .summary-box { display: flex; flex-col: column; align-items: flex-end; margin-top: 20px; padding-right: 16px; }
+          .summary-box { display: flex; flex-direction: column; align-items: flex-end; margin-top: 20px; padding-right: 16px; }
           .total-due-label { font-size: 13px; font-weight: 600; color: #64748b; text-transform: uppercase; }
           .total-due-value { font-size: 24px; font-weight: 800; color: #6d28d9; margin-top: 4px; }
           .legal-footer { margin-top: 100px; padding-top: 20px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; text-align: center; font-weight: 500; }
@@ -425,7 +46,60 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
               <div class="brand-subtitle">Automated Ledger Subsystem</div>
             </div>
             <div class="meta-box">
-              <div><strong>Invoice Ref:</strong> \${invoiceNumber}</div>
-              <div><strong>Date Compiled:</strong> \${new Date().toLocaleDateString('en-GB')}</div>
+              <div><strong>Invoice Ref:</strong> ${invoiceNumber}</div>
+              <div><strong>Date Compiled:</strong> ${new Date().toLocaleDateString('en-GB')}</div>
             </div>
           </div>
+          
+          <div class="invoice-heading">Invoice Statement</div>
+          
+          <div class="details-grid">
+            <div>
+              <div class="section-caption">Debtor Entity</div>
+              <div class="entity-name">${companyName}</div>
+            </div>
+            <div style="text-align: right;">
+              <div class="section-caption">Payment Terms</div>
+              <div style="font-size: 14px; font-weight: 600; color: #334155;">14 Days Net</div>
+            </div>
+          </div>
+          
+          <table class="ledger-table">
+            <thead>
+              <tr>
+                <th>Work Item Description</th>
+                <th style="text-align: right; width: 150px;">Total Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>${itemDescription}</td>
+                <td style="text-align: right; font-weight: 700; color: #0f172a;">£${compiledCost}</td>
+              </tr>
+            </tbody>
+          </table>
+          
+          <div class="summary-box">
+            <div class="total-due-label">Total Balance Due</div>
+            <div class="total-due-value">£${compiledCost}</div>
+          </div>
+          
+          <div class="legal-footer">
+            Regulated under England & Wales Jurisdiction. Data Protection Officer Audit Verification: Joshua Stevens. UK GDPR Compliant Asset Ledger.
+          </div>
+        </div>
+        <script>
+          window.onload = function() {
+            window.print();
+            setTimeout(function() { window.close(); }, 500);
+          };
+        </s` + `cript>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(cleanHtml);
+    printWindow.document.close();
+  };
+</script>
