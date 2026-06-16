@@ -4,7 +4,6 @@ import Layout from '../../layouts/Layout.astro';
 const db = Astro.locals.runtime.env.DB;
 const r2 = Astro.locals.runtime.env.INVOICE_VAULT;
 let feedbackMessage = "";
-
 const viewMode = Astro.url.searchParams.get('view') || 'active';
 const editTargetId = Astro.url.searchParams.get('editId') || null;
 
@@ -33,7 +32,6 @@ if (Astro.request.method === "POST") {
         const name = client.company_name.trim();
         const words = name.split(/\s+/);
         let abbreviation = (words.length === 1) ? name.substring(0, 4).toUpperCase() : words.map((w: string) => w[0]).join("").toUpperCase();
-
         const counterScan = await db.prepare("SELECT COUNT(*) as count FROM invoices").first();
         const nextSequenceId = (counterScan?.count || 0) + 1;
         const generatedInvoiceNumber = `${prefix}-${abbreviation}-${nextSequenceId}`;
@@ -80,7 +78,6 @@ if (Astro.request.method === "POST") {
           const logEntry = `Contract Won - £${totalCombinedCost.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
           let updatedHistory = currentOpp?.price_history || "";
           updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
-
           await db.prepare(`
             UPDATE opportunities SET stage = 'Contract Won', gross_value = ?, price_history = ? WHERE id = ?
           `).bind(totalCombinedCost, updatedHistory, opportunityId).run();
@@ -93,14 +90,13 @@ if (Astro.request.method === "POST") {
       const id = formData.get("itemId");
       const nextStatus = formData.get("status");
       const cost = parseFloat(formData.get("amountDue")?.toString() || "0");
-
       const record = await db.prepare("SELECT i.status, i.sent_date, i.paid_date, i.opportunity_id, c.email, c.company_name, i.invoice_number FROM invoices i JOIN clients c ON i.client_id = c.id WHERE i.id = ?").bind(id).first();
       const currentTimestamp = new Date().toISOString().split('T')[0];
       
       let sentDate = record?.sent_date || null;
       let paidDate = record?.paid_date || null;
-
-      if (nextStatus === "Sent" && record?.status !== "Sent") { sentDate = currentTimestamp; }
+      if (nextStatus === "Sent" && record?.status !== "Sent") { sentDate = currentTimestamp;
+      }
       if (nextStatus === "Paid" && record?.status !== "Paid") {
         if (!sentDate) sentDate = currentTimestamp;
         paidDate = currentTimestamp;
@@ -135,7 +131,6 @@ if (Astro.request.method === "POST") {
         const logEntry = `Value Adjusted - £${cost.toLocaleString('en-GB', {minimumFractionDigits:2})} - ${dateStr}`;
         let updatedHistory = currentOpp?.price_history || "";
         updatedHistory = updatedHistory ? `${updatedHistory}||${logEntry}` : logEntry;
-
         await db.prepare(`
           UPDATE opportunities SET gross_value = ?, price_history = ? WHERE id = ?
         `).bind(cost, updatedHistory, record.opportunity_id).run();
@@ -350,7 +345,7 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
                         </div>
                       ) : viewMode === 'active' ? (
                         <div class="flex flex-col items-end gap-1">
-                          <button onclick={`window.print_target_statement('${invoice.invoice_number}', '${invoice.company_name}', '${invoice.item_description}', '${invoice.amount_due}')`} class="text-emerald-400 hover:underline font-bold text-right">Export</button>
+                          <button onclick={`window.print_target_statement('${invoice.invoice_number}', '${invoice.company_name.replace(/'/g, "\\'")}', '${invoice.item_description.replace(/'/g, "\\'")}', '${invoice.amount_due}')`} class="text-emerald-400 hover:underline font-bold text-right">Export</button>
                           <a href={`?editId=${invoice.id}`} class="text-brand-accent hover:underline text-right">Edit</a>
                           <form method="POST" class="inline text-right">
                             <input type="hidden" name="actionType" value="archive" /><input type="hidden" name="itemId" value={invoice.id} />
@@ -381,3 +376,56 @@ const visualProgressionSteps = [{ key: 'Generated', label: 'Generated' }, { key:
     </div>
   </main>
 </Layout>
+
+<script is:inline>
+  window.print_target_statement = function (invoiceNumber, companyName, itemDescription, amountDue) {
+    const printWindow = window.open('', '_blank', 'width=850,height=1100');
+    if (!printWindow) {
+      alert('Popup blocker prevented invoice generation preview window from displaying.');
+      return;
+    }
+
+    const compiledCost = parseFloat(amountDue).toLocaleString('en-GB', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+
+    const cleanHtml = `
+      <!DOCTYPE html>
+      <html lang="en-GB">
+      <head>
+        <meta charset="UTF-8">
+        <title>Invoice Statement - \${invoiceNumber}</title>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #0f172a; padding: 50px; line-height: 1.6; background-color: #ffffff; }
+          .container { max-width: 750px; margin: 0 auto; }
+          .header-row { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #f1f5f9; padding-bottom: 25px; margin-bottom: 40px; }
+          .brand-title { font-size: 26px; font-weight: 800; color: #6d28d9; text-transform: uppercase; letter-spacing: -0.025em; }
+          .brand-subtitle { font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 2px; }
+          .meta-box { text-align: right; font-size: 13px; color: #475569; }
+          .invoice-heading { font-size: 32px; font-weight: 900; color: #0f172a; tracking-tight: -0.05em; margin-bottom: 30px; text-transform: uppercase; }
+          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 50px; }
+          .section-caption { font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+          .entity-name { font-size: 16px; font-weight: 700; color: #1e293b; }
+          .ledger-table { width: 100%; border-collapse: collapse; margin-bottom: 40px; text-align: left; }
+          .ledger-table th { background-color: #f8fafc; padding: 14px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0; }
+          .ledger-table td { padding: 16px; font-size: 14px; color: #334155; border-bottom: 1px solid #f1f5f9; }
+          .summary-box { display: flex; flex-col: column; align-items: flex-end; margin-top: 20px; padding-right: 16px; }
+          .total-due-label { font-size: 13px; font-weight: 600; color: #64748b; text-transform: uppercase; }
+          .total-due-value { font-size: 24px; font-weight: 800; color: #6d28d9; margin-top: 4px; }
+          .legal-footer { margin-top: 100px; padding-top: 20px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; text-align: center; font-weight: 500; }
+          @print { body { padding: 20px; } }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header-row">
+            <div>
+              <div class="brand-title">JS Office Solutions</div>
+              <div class="brand-subtitle">Automated Ledger Subsystem</div>
+            </div>
+            <div class="meta-box">
+              <div><strong>Invoice Ref:</strong> \${invoiceNumber}</div>
+              <div><strong>Date Compiled:</strong> \${new Date().toLocaleDateString('en-GB')}</div>
+            </div>
+          </div>
